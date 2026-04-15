@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import JSZip from "jszip";
 import { extractPdfText } from "./lib/pdfExtractor";
 
@@ -10,8 +10,15 @@ export default function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const [corpus, setCorpus] = useState([]);
+  const [processedDocs, setProcessedDocs] = useState([]);
   const [processingLog, setProcessingLog] = useState([]);
+
+  const [metadata, setMetadata] = useState({
+    materia: "",
+    unidad: "",
+    catedra: "",
+    tipo: ""
+  });
 
   const zipRef = useRef(null);
 
@@ -22,7 +29,7 @@ export default function App() {
     setLoading(true);
     setError("");
     setFiles([]);
-    setCorpus([]);
+    setProcessedDocs([]);
     setProcessingLog([]);
     setZipName(file.name);
 
@@ -57,7 +64,7 @@ export default function App() {
 
     setLoading(true);
     setError("");
-    setCorpus([]);
+    setProcessedDocs([]);
     setProcessingLog([]);
 
     try {
@@ -72,13 +79,19 @@ export default function App() {
         try {
           const data = await extractPdfText(zipRef.current, file.path);
 
+          const cleanText = (data.text || "").replace(/\s+\n/g, "\n").trim();
+
           results.push({
             name: file.name,
+            path: file.path,
             pages: data.pages,
-            chars: data.chars
+            chars: cleanText.length,
+            text: cleanText,
+            preview: cleanText.slice(0, 400),
+            preliminary_category: "unknown"
           });
 
-          logs.push(`OK: ${file.name} — ${data.pages} págs — ${data.chars} chars`);
+          logs.push(`OK: ${file.name} — ${data.pages} págs — ${cleanText.length} chars`);
           setProcessingLog([...logs]);
         } catch (err) {
           logs.push(`ERROR: ${file.name} — ${err.message}`);
@@ -87,7 +100,7 @@ export default function App() {
         }
       }
 
-      setCorpus(results);
+      setProcessedDocs(results);
     } catch (err) {
       console.error(err);
       setError(`Error procesando PDFs: ${err.message}`);
@@ -96,26 +109,64 @@ export default function App() {
     }
   }
 
+  function updateMetadata(field, value) {
+    setMetadata((prev) => ({
+      ...prev,
+      [field]: value
+    }));
+  }
+
+  function updateDocCategory(index, value) {
+    setProcessedDocs((prev) =>
+      prev.map((doc, i) =>
+        i === index ? { ...doc, preliminary_category: value } : doc
+      )
+    );
+  }
+
   const pdfFiles = files.filter((f) => f.isPdf);
   const otherFiles = files.filter((f) => !f.isPdf);
 
+  const corpus = useMemo(() => {
+    const pagesTotal = processedDocs.reduce((acc, doc) => acc + doc.pages, 0);
+    const charsTotal = processedDocs.reduce((acc, doc) => acc + doc.chars, 0);
+
+    return {
+      metadata: {
+        ...metadata
+      },
+      stats: {
+        files_total: processedDocs.length,
+        pages_total: pagesTotal,
+        chars_total: charsTotal
+      },
+      documents: processedDocs
+    };
+  }, [metadata, processedDocs]);
+
   return (
-    <div style={{ padding: 24, fontFamily: "Arial", maxWidth: 1000, margin: "0 auto" }}>
+    <div style={container}>
       <h1>ManualTeX v1</h1>
-      <p>Backend: <strong>{backendStatus}</strong></p>
+      <p>
+        Backend: <strong>{backendStatus}</strong>
+      </p>
 
       <div style={card}>
         <h2>Cargar ZIP</h2>
         <input type="file" accept=".zip" onChange={handleZipChange} />
 
-        {zipName && <p><strong>ZIP:</strong> {zipName}</p>}
+        {zipName && (
+          <p>
+            <strong>ZIP:</strong> {zipName}
+          </p>
+        )}
         {loading && <p>Leyendo...</p>}
         {error && <p style={{ color: "crimson" }}>{error}</p>}
       </div>
 
       {files.length > 0 && !loading && (
         <div style={card}>
-          <h3>Resumen</h3>
+          <h3>Resumen del ZIP</h3>
           <p>Total de archivos: <strong>{files.length}</strong></p>
           <p>PDF detectados: <strong>{pdfFiles.length}</strong></p>
           <p>Otros archivos: <strong>{otherFiles.length}</strong></p>
@@ -141,63 +192,131 @@ export default function App() {
         </div>
       )}
 
-      {pdfFiles.length > 0 && (
-        <div style={card}>
-          <h3>PDF detectados</h3>
-          <table style={table}>
-            <thead>
-              <tr>
-                <th style={th}>Nombre</th>
-                <th style={th}>Ruta</th>
-                <th style={th}>Extensión</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pdfFiles.map((file, i) => (
-                <tr key={i}>
-                  <td style={td}>{file.name}</td>
-                  <td style={td}>{file.path}</td>
-                  <td style={td}>{file.extension}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {processedDocs.length > 0 && (
+        <>
+          <div style={card}>
+            <h2>Metadata del corpus</h2>
 
-      {otherFiles.length > 0 && (
-        <div style={card}>
-          <h3>Otros archivos</h3>
-          <table style={table}>
-            <thead>
-              <tr>
-                <th style={th}>Nombre</th>
-                <th style={th}>Ruta</th>
-                <th style={th}>Extensión</th>
-              </tr>
-            </thead>
-            <tbody>
-              {otherFiles.map((file, i) => (
-                <tr key={i}>
-                  <td style={td}>{file.name}</td>
-                  <td style={td}>{file.path}</td>
-                  <td style={td}>{file.extension}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            <div style={formGrid}>
+              <label style={label}>
+                Materia
+                <input
+                  style={input}
+                  value={metadata.materia}
+                  onChange={(e) => updateMetadata("materia", e.target.value)}
+                  placeholder="Ej: Investigación Operativa"
+                />
+              </label>
 
-      {corpus.length > 0 && (
-        <div style={card}>
-          <h3>Corpus procesado</h3>
-          {corpus.map((doc, i) => (
-            <div key={i} style={{ marginBottom: 8 }}>
-              <strong>{doc.name}</strong> — {doc.pages} páginas — {doc.chars} caracteres
+              <label style={label}>
+                Unidad
+                <input
+                  style={input}
+                  value={metadata.unidad}
+                  onChange={(e) => updateMetadata("unidad", e.target.value)}
+                  placeholder="Ej: Unidad 1"
+                />
+              </label>
+
+              <label style={label}>
+                Cátedra
+                <input
+                  style={input}
+                  value={metadata.catedra}
+                  onChange={(e) => updateMetadata("catedra", e.target.value)}
+                  placeholder="Ej: Pérez / Comisión A"
+                />
+              </label>
+
+              <label style={label}>
+                Tipo
+                <select
+                  style={input}
+                  value={metadata.tipo}
+                  onChange={(e) => updateMetadata("tipo", e.target.value)}
+                >
+                  <option value="">Seleccionar</option>
+                  <option value="exacta">Exacta</option>
+                  <option value="humanistica">Humanística</option>
+                  <option value="contable">Contable</option>
+                  <option value="mixta">Mixta</option>
+                </select>
+              </label>
             </div>
-          ))}
-        </div>
+          </div>
+
+          <div style={card}>
+            <h2>Corpus construido</h2>
+            <p>Documentos: <strong>{corpus.stats.files_total}</strong></p>
+            <p>Páginas totales: <strong>{corpus.stats.pages_total}</strong></p>
+            <p>Caracteres totales: <strong>{corpus.stats.chars_total}</strong></p>
+          </div>
+
+          <div style={card}>
+            <h2>Documentos procesados</h2>
+
+            {processedDocs.map((doc, i) => (
+              <div key={doc.path} style={docCard}>
+                <div style={docHeader}>
+                  <div>
+                    <strong>{doc.name}</strong>
+                    <div style={muted}>
+                      {doc.pages} páginas — {doc.chars} caracteres
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={labelSmall}>
+                      Categoría preliminar
+                      <select
+                        style={input}
+                        value={doc.preliminary_category}
+                        onChange={(e) => updateDocCategory(i, e.target.value)}
+                      >
+                        <option value="unknown">unknown</option>
+                        <option value="teoria">teoría</option>
+                        <option value="practica">práctica</option>
+                        <option value="mixto">mixto</option>
+                        <option value="descartable">descartable</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <details>
+                  <summary style={{ cursor: "pointer", marginBottom: 8 }}>
+                    Ver preview
+                  </summary>
+                  <div style={previewBox}>
+                    {doc.preview || "(sin texto extraído)"}
+                  </div>
+                </details>
+              </div>
+            ))}
+          </div>
+
+          <div style={card}>
+            <h2>Vista JSON resumida del corpus</h2>
+            <pre style={jsonBox}>
+              {JSON.stringify(
+                {
+                  metadata: corpus.metadata,
+                  stats: corpus.stats,
+                  documents: corpus.documents.map((d) => ({
+                    name: d.name,
+                    path: d.path,
+                    pages: d.pages,
+                    chars: d.chars,
+                    preliminary_category: d.preliminary_category,
+                    preview: d.preview
+                  }))
+                },
+                null,
+                2
+              )}
+            </pre>
+          </div>
+        </>
       )}
     </div>
   );
@@ -208,6 +327,13 @@ function getExtension(filename) {
   if (parts.length < 2) return "";
   return parts.pop().toLowerCase();
 }
+
+const container = {
+  padding: 24,
+  fontFamily: "Arial, sans-serif",
+  maxWidth: 1100,
+  margin: "0 auto"
+};
 
 const card = {
   marginTop: 20,
@@ -222,18 +348,68 @@ const button = {
   cursor: "pointer"
 };
 
-const table = {
-  width: "100%",
-  borderCollapse: "collapse"
+const formGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gap: 16
 };
 
-const th = {
-  textAlign: "left",
-  borderBottom: "1px solid #ddd",
-  padding: "8px"
+const label = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  fontWeight: 600
 };
 
-const td = {
-  borderBottom: "1px solid #eee",
-  padding: "8px"
+const labelSmall = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  fontSize: 14
+};
+
+const input = {
+  padding: 8,
+  borderRadius: 8,
+  border: "1px solid #ccc"
+};
+
+const docCard = {
+  border: "1px solid #eee",
+  borderRadius: 10,
+  padding: 12,
+  marginBottom: 12
+};
+
+const docHeader = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: 16,
+  marginBottom: 10
+};
+
+const muted = {
+  color: "#666",
+  fontSize: 14,
+  marginTop: 4
+};
+
+const previewBox = {
+  background: "#fafafa",
+  border: "1px solid #eee",
+  borderRadius: 8,
+  padding: 12,
+  whiteSpace: "pre-wrap",
+  lineHeight: 1.4
+};
+
+const jsonBox = {
+  background: "#111",
+  color: "#eee",
+  padding: 16,
+  borderRadius: 10,
+  overflowX: "auto",
+  fontSize: 13,
+  lineHeight: 1.4
 };
