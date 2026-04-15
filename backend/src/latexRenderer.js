@@ -12,52 +12,44 @@ function esc(text = '') {
     .replace(/\^/g, '\\textasciicircum{}');
 }
 
-function renderManualToTex(corpus, structure, manualContent) {
-  const title =
-    structure.title ||
-    `Manual de Estudio: ${corpus.metadata?.materia || 'Manual'}`;
+function renderManualToTex(corpus, structure, manualContent, template) {
+  let tex = template;
 
-  const parts = [];
+  // === PORTADA ===
+  tex = tex.replace(
+    '\\manualtitle{Materia}{Unidad N: Título}{Cátedra}',
+    `\\manualtitle{${esc(corpus.metadata.materia)}}{${esc(
+      corpus.metadata.unidad
+    )}}{${esc(corpus.metadata.catedra)}}`
+  );
 
-  parts.push(`\\documentclass[12pt]{article}`);
-  parts.push(`\\usepackage[utf8]{inputenc}`);
-  parts.push(`\\usepackage[T1]{fontenc}`);
-  parts.push(`\\usepackage[spanish]{babel}`);
-  parts.push(`\\usepackage[a4paper,margin=2.5cm]{geometry}`);
-  parts.push(`\\usepackage{parskip}`);
-  parts.push(`\\usepackage{hyperref}`);
-  parts.push(`\\title{${esc(title)}}`);
-  parts.push(`\\author{ManualTeX}`);
-  parts.push(`\\date{}`);
-  parts.push(`\\begin{document}`);
-  parts.push(`\\maketitle`);
-  parts.push(`\\tableofcontents`);
-  parts.push(`\\newpage`);
+  let body = '';
 
-  for (const chapter of manualContent.chapters || []) {
-    parts.push(`\\section{${esc(chapter.title)}}`);
+  for (const chapter of manualContent.chapters) {
+    body += `\\unidad{${esc(chapter.title)}}\n\n`;
 
-    if (chapter.intro) {
-      parts.push(esc(chapter.intro));
-    }
+    body += esc(chapter.intro) + '\n\n';
 
-    for (const section of chapter.sections || []) {
-      parts.push(`\\subsection{${esc(section.title)}}`);
+    for (const section of chapter.sections) {
+      body += `\\seccion{${esc(section.title)}}\n\n`;
 
-      for (const paragraph of section.paragraphs || []) {
-        parts.push(esc(paragraph));
+      for (const paragraph of section.paragraphs) {
+        body += esc(paragraph) + '\n\n';
       }
     }
 
     if (chapter.closing) {
-      parts.push(`\\paragraph{Cierre}`);
-      parts.push(esc(chapter.closing));
+      body += `\\begin{nota}\n${esc(chapter.closing)}\n\\end{nota}\n\n`;
     }
   }
 
-  parts.push(`\\end{document}`);
+  // === GLOSARIO BÁSICO ===
+  body += `\\glosario\n\n`;
+  body += `\\glsentry{Manual}{Documento académico generado automáticamente.}\n`;
 
-  return parts.join('\n\n');
+  tex = tex.replace('% CONTENIDO_AQUI', body);
+
+  return tex;
 }
 
 module.exports = {
