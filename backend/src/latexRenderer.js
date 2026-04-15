@@ -19,15 +19,8 @@ function cleanTitle(text = '', max = 65) {
   return stripped.length <= max ? stripped : stripped.slice(0, max).trim();
 }
 
-function splitParagraphs(text = '') {
-  return String(text)
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-}
-
-function renderParagraphBlock(text = '') {
-  return splitParagraphs(text)
+function renderParagraphBlock(paragraphs = []) {
+  return paragraphs
     .map((p) => `${esc(p)}\n`)
     .join('\n');
 }
@@ -38,13 +31,12 @@ function renderChapter(chapter) {
   out += `\\unidad{${esc(cleanTitle(chapter.title, 45))}}\n\n`;
 
   if (chapter.intro) {
-    out += renderParagraphBlock(chapter.intro);
-    out += '\n';
+    out += `${esc(chapter.intro)}\n\n`;
   }
 
   for (const section of chapter.sections || []) {
     out += `\\seccion{${esc(cleanTitle(section.title, 65))}}\n\n`;
-    out += renderParagraphBlock(section.content || '');
+    out += renderParagraphBlock(section.paragraphs || []);
     out += '\n';
   }
 
@@ -69,6 +61,7 @@ function renderGlossary(glossary = []) {
 
 function renderManualToTex({ corpus, approvedStructure, manualContent, template }) {
   const metadata = corpus.metadata || {};
+
   const titleMateria = metadata.materia || 'Materia';
   const titleUnidad =
     metadata.unidad || approvedStructure.title || 'Unidad';
