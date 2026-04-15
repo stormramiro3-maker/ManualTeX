@@ -1,8 +1,8 @@
 import * as pdfjsLib from "pdfjs-dist";
 
-// Worker remoto compatible
+// usar el worker de la misma versión instalada
 pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 export async function extractPdfText(zip, filePath) {
   const entry = zip.file(filePath);
