@@ -1,6 +1,5 @@
 FROM node:20-slim
 
-# Instalar LaTeX (pesado pero seguro para Fase 1)
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
     texlive-full && \
