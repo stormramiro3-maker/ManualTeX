@@ -13,7 +13,7 @@ export default function App() {
   return (
     <div style={{ padding: 20 }}>
       <h1>ManualTeX v1</h1>
-      <p>Estado backend: {status}</p>
+      <p>Backend: {status}</p>
     </div>
   );
 }
