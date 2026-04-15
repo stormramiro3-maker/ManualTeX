@@ -2,6 +2,8 @@ import { useState, useRef, useMemo } from "react";
 import JSZip from "jszip";
 import { extractPdfText } from "./lib/pdfExtractor";
 
+const API_URL = import.meta.env.VITE_API_URL;
+
 export default function App() {
   const [backendStatus] = useState("ok");
 
@@ -20,6 +22,10 @@ export default function App() {
     tipo: ""
   });
 
+  const [structureResult, setStructureResult] = useState(null);
+  const [structureLoading, setStructureLoading] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
+
   const zipRef = useRef(null);
 
   async function handleZipChange(event) {
@@ -31,6 +37,8 @@ export default function App() {
     setFiles([]);
     setProcessedDocs([]);
     setProcessingLog([]);
+    setStructureResult(null);
+    setFeedbackText("");
     setZipName(file.name);
 
     try {
@@ -66,6 +74,8 @@ export default function App() {
     setError("");
     setProcessedDocs([]);
     setProcessingLog([]);
+    setStructureResult(null);
+    setFeedbackText("");
 
     try {
       const pdfFiles = files.filter((f) => f.isPdf);
@@ -78,7 +88,6 @@ export default function App() {
 
         try {
           const data = await extractPdfText(zipRef.current, file.path);
-
           const cleanText = (data.text || "").replace(/\s+\n/g, "\n").trim();
 
           results.push({
@@ -132,9 +141,7 @@ export default function App() {
     const charsTotal = processedDocs.reduce((acc, doc) => acc + doc.chars, 0);
 
     return {
-      metadata: {
-        ...metadata
-      },
+      metadata: { ...metadata },
       stats: {
         files_total: processedDocs.length,
         pages_total: pagesTotal,
@@ -144,22 +151,89 @@ export default function App() {
     };
   }, [metadata, processedDocs]);
 
+  async function handleGenerateStructure() {
+    setStructureLoading(true);
+    setError("");
+    setStructureResult(null);
+
+    try {
+      const res = await fetch(`${API_URL}/api/structure`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ corpus })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Error generando estructura");
+      }
+
+      setStructureResult({
+        version: data.structureVersion || 1,
+        structure: data.structure,
+        issues: data.issues,
+        usage: data.usage
+      });
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      setStructureLoading(false);
+    }
+  }
+
+  async function handleReviseStructure() {
+    if (!structureResult || !feedbackText.trim()) return;
+
+    setStructureLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_URL}/api/structure/revise`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          corpus,
+          previousStructure: structureResult.structure,
+          feedbackText
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Error rehaciendo estructura");
+      }
+
+      setStructureResult((prev) => ({
+        version: (prev?.version || 1) + 1,
+        structure: data.structure,
+        issues: data.issues,
+        usage: data.usage
+      }));
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      setStructureLoading(false);
+    }
+  }
+
   return (
     <div style={container}>
       <h1>ManualTeX v1</h1>
-      <p>
-        Backend: <strong>{backendStatus}</strong>
-      </p>
+      <p>Backend: <strong>{backendStatus}</strong></p>
 
       <div style={card}>
         <h2>Cargar ZIP</h2>
         <input type="file" accept=".zip" onChange={handleZipChange} />
 
-        {zipName && (
-          <p>
-            <strong>ZIP:</strong> {zipName}
-          </p>
-        )}
+        {zipName && <p><strong>ZIP:</strong> {zipName}</p>}
         {loading && <p>Leyendo...</p>}
         {error && <p style={{ color: "crimson" }}>{error}</p>}
       </div>
@@ -185,9 +259,7 @@ export default function App() {
         <div style={card}>
           <h3>Log de procesamiento</h3>
           {processingLog.map((line, i) => (
-            <div key={i} style={{ marginBottom: 6 }}>
-              {line}
-            </div>
+            <div key={i} style={{ marginBottom: 6 }}>{line}</div>
           ))}
         </div>
       )}
@@ -196,7 +268,6 @@ export default function App() {
         <>
           <div style={card}>
             <h2>Metadata del corpus</h2>
-
             <div style={formGrid}>
               <label style={label}>
                 Materia
@@ -204,7 +275,6 @@ export default function App() {
                   style={input}
                   value={metadata.materia}
                   onChange={(e) => updateMetadata("materia", e.target.value)}
-                  placeholder="Ej: Investigación Operativa"
                 />
               </label>
 
@@ -214,7 +284,6 @@ export default function App() {
                   style={input}
                   value={metadata.unidad}
                   onChange={(e) => updateMetadata("unidad", e.target.value)}
-                  placeholder="Ej: Unidad 1"
                 />
               </label>
 
@@ -224,7 +293,6 @@ export default function App() {
                   style={input}
                   value={metadata.catedra}
                   onChange={(e) => updateMetadata("catedra", e.target.value)}
-                  placeholder="Ej: Pérez / Comisión A"
                 />
               </label>
 
@@ -254,7 +322,6 @@ export default function App() {
 
           <div style={card}>
             <h2>Documentos procesados</h2>
-
             {processedDocs.map((doc, i) => (
               <div key={doc.path} style={docCard}>
                 <div style={docHeader}>
@@ -316,6 +383,90 @@ export default function App() {
               )}
             </pre>
           </div>
+
+          <div style={card}>
+            <h2>Estructura</h2>
+            <button
+              onClick={handleGenerateStructure}
+              style={button}
+              disabled={structureLoading}
+            >
+              {structureLoading ? "Generando..." : "Generar estructura"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {structureResult && (
+        <>
+          <div style={card}>
+            <h2>Estructura propuesta — v{structureResult.version}</h2>
+            <p><strong>Título:</strong> {structureResult.structure.title}</p>
+
+            {structureResult.structure.chapters.map((chapter, index) => (
+              <div key={index} style={docCard}>
+                <h3>{index + 1}. {chapter.title}</h3>
+                <p><strong>Propósito:</strong> {chapter.purpose}</p>
+
+                <p><strong>Fuentes:</strong></p>
+                <ul>
+                  {chapter.source_documents.map((src, i) => (
+                    <li key={i}>{src}</li>
+                  ))}
+                </ul>
+
+                <p><strong>Secciones:</strong></p>
+                <ul>
+                  {chapter.sections.map((section, i) => (
+                    <li key={i}>
+                      <strong>{section.title}</strong>: {section.descriptor}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+
+          <div style={card}>
+            <h2>Issues detectados</h2>
+            <div>
+              <strong>Vacíos</strong>
+              <ul>
+                {(structureResult.issues?.vacios || []).map((x, i) => <li key={i}>{x}</li>)}
+              </ul>
+            </div>
+            <div>
+              <strong>Contradicciones</strong>
+              <ul>
+                {(structureResult.issues?.contradicciones || []).map((x, i) => <li key={i}>{x}</li>)}
+              </ul>
+            </div>
+            <div>
+              <strong>Observaciones</strong>
+              <ul>
+                {(structureResult.issues?.observaciones || []).map((x, i) => <li key={i}>{x}</li>)}
+              </ul>
+            </div>
+          </div>
+
+          <div style={card}>
+            <h2>Feedback sobre estructura</h2>
+            <textarea
+              style={textarea}
+              value={feedbackText}
+              onChange={(e) => setFeedbackText(e.target.value)}
+              placeholder="Ej: Quiero 5 capítulos en vez de 3, separar teoría de práctica y dar más entidad a modelos TDI."
+            />
+            <div style={{ marginTop: 12 }}>
+              <button
+                onClick={handleReviseStructure}
+                style={button}
+                disabled={structureLoading || !feedbackText.trim()}
+              >
+                {structureLoading ? "Rehaciendo..." : "Rehacer con feedback"}
+              </button>
+            </div>
+          </div>
         </>
       )}
     </div>
@@ -372,6 +523,15 @@ const input = {
   padding: 8,
   borderRadius: 8,
   border: "1px solid #ccc"
+};
+
+const textarea = {
+  width: "100%",
+  minHeight: 120,
+  padding: 12,
+  borderRadius: 8,
+  border: "1px solid #ccc",
+  resize: "vertical"
 };
 
 const docCard = {
