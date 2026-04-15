@@ -27,6 +27,10 @@ export default function App() {
   const [feedbackText, setFeedbackText] = useState("");
   const [approvalMessage, setApprovalMessage] = useState("");
 
+  const [texLoading, setTexLoading] = useState(false);
+  const [generatedTex, setGeneratedTex] = useState("");
+  const [texUsage, setTexUsage] = useState(null);
+
   const zipRef = useRef(null);
 
   async function handleZipChange(event) {
@@ -41,6 +45,8 @@ export default function App() {
     setStructureResult(null);
     setFeedbackText("");
     setApprovalMessage("");
+    setGeneratedTex("");
+    setTexUsage(null);
     setZipName(file.name);
 
     try {
@@ -88,6 +94,8 @@ export default function App() {
     setStructureResult(null);
     setFeedbackText("");
     setApprovalMessage("");
+    setGeneratedTex("");
+    setTexUsage(null);
 
     try {
       const pdfFiles = files.filter((f) => f.isPdf);
@@ -168,6 +176,8 @@ export default function App() {
     setError("");
     setStructureResult(null);
     setApprovalMessage("");
+    setGeneratedTex("");
+    setTexUsage(null);
 
     try {
       const res = await fetch(`${API_URL}/api/structure`, {
@@ -204,6 +214,8 @@ export default function App() {
     setStructureLoading(true);
     setError("");
     setApprovalMessage("");
+    setGeneratedTex("");
+    setTexUsage(null);
 
     try {
       const res = await fetch(`${API_URL}/api/structure/revise`, {
@@ -254,6 +266,54 @@ export default function App() {
     setApprovalMessage("Estructura validada sin feedback adicional.");
   }
 
+  async function handleGenerateTex() {
+    if (!structureResult?.structure) return;
+
+    setTexLoading(true);
+    setError("");
+    setGeneratedTex("");
+    setTexUsage(null);
+
+    try {
+      const res = await fetch(`${API_URL}/api/generate-tex`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          corpus,
+          approvedStructure: structureResult.structure
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Error generando .tex");
+      }
+
+      setGeneratedTex(data.tex || "");
+      setTexUsage(data.usage || null);
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      setTexLoading(false);
+    }
+  }
+
+  function downloadTex() {
+    if (!generatedTex) return;
+
+    const blob = new Blob([generatedTex], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "manualtex-draft.tex";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const structureChapterCount = structureResult?.structure?.chapters?.length || 0;
   const structureTheoryCount = processedDocs.filter(
     (d) => d.preliminary_category === "teoria"
@@ -265,9 +325,7 @@ export default function App() {
   return (
     <div style={container}>
       <h1>ManualTeX v1</h1>
-      <p>
-        Backend: <strong>{backendStatus}</strong>
-      </p>
+      <p>Backend: <strong>{backendStatus}</strong></p>
 
       <div style={card}>
         <h2>Cargar ZIP</h2>
@@ -542,6 +600,43 @@ export default function App() {
               </div>
             )}
           </div>
+
+          <div style={card}>
+            <h2>Generación de .tex</h2>
+            <p>
+              Cuando esta estructura te cierre, generá un borrador `.tex` a partir de
+              la estructura aprobada y el corpus procesado.
+            </p>
+
+            <div style={buttonRow}>
+              <button
+                onClick={handleGenerateTex}
+                style={primaryButton}
+                disabled={texLoading}
+              >
+                {texLoading ? "Generando .tex..." : "Generar .tex"}
+              </button>
+
+              {generatedTex && (
+                <button onClick={downloadTex} style={secondaryButton}>
+                  Descargar .tex
+                </button>
+              )}
+            </div>
+
+            {texUsage && (
+              <div style={{ marginTop: 16, color: "#555" }}>
+                Tokens input: {texUsage.input_tokens} — Tokens output: {texUsage.output_tokens}
+              </div>
+            )}
+          </div>
+
+          {generatedTex && (
+            <div style={card}>
+              <h2>Preview del .tex generado</h2>
+              <pre style={jsonBox}>{generatedTex}</pre>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -638,7 +733,9 @@ const feedbackTextarea = {
   resize: "vertical",
   fontSize: 16,
   lineHeight: 1.4,
-  background: "white"
+  background: "white",
+  boxSizing: "border-box",
+  display: "block"
 };
 
 const successBox = {
