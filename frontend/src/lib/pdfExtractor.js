@@ -1,26 +1,63 @@
 import * as pdfjsLib from "pdfjs-dist";
 
-// necesario para que funcione en browser
+// Worker remoto compatible
 pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
 
 export async function extractPdfText(zip, filePath) {
-  const fileData = await zip.file(filePath).async("arraybuffer");
-  const pdf = await pdfjsLib.getDocument({ data: fileData }).promise;
+  const entry = zip.file(filePath);
+
+  if (!entry) {
+    throw new Error(`No se encontró el archivo en el ZIP: ${filePath}`);
+  }
+
+  const fileData = await entry.async("uint8array");
+
+  let pdf;
+  try {
+    pdf = await pdfjsLib.getDocument({
+      data: fileData,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true
+    }).promise;
+  } catch (err) {
+    throw new Error(`No se pudo abrir el PDF "${filePath}": ${err.message}`);
+  }
 
   let fullText = "";
+  const pageSummaries = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
+    try {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
 
-    const pageText = content.items.map(item => item.str).join(" ");
-    fullText += pageText + "\n";
+      const pageText = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      fullText += pageText + "\n";
+      pageSummaries.push({
+        page: i,
+        chars: pageText.length
+      });
+    } catch (err) {
+      console.warn(`Falló extracción en página ${i} de ${filePath}:`, err);
+      pageSummaries.push({
+        page: i,
+        chars: 0,
+        error: true
+      });
+    }
   }
 
   return {
-    text: fullText,
+    text: fullText.trim(),
     pages: pdf.numPages,
-    chars: fullText.length
+    chars: fullText.trim().length,
+    pageSummaries
   };
 }
