@@ -3,13 +3,9 @@ const cors = require('cors');
 
 const app = express();
 
-app.use(cors({
-  origin: process.env.FRONTEND_URL || '*'
-}));
-
+app.use(cors({ origin: true }));
 app.use(express.json());
 
-// 🔥 health check
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -18,7 +14,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// puerto
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
