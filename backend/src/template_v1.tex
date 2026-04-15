@@ -1,0 +1,397 @@
+% ╔══════════════════════════════════════════════════════════════════╗
+% ║  TEMPLATE v1.2 — Sistema Editorial para Manuales de Estudio   ║
+% ║  Universidad Tecnológica Nacional — FRBB — LOI                ║
+% ║  Diseñado para reproducibilidad y escalabilidad               ║
+% ╚══════════════════════════════════════════════════════════════════╝
+%
+% CHANGELOG v1.2:
+%   - hyperref reubicado como último \usepackage (tikz movido antes)
+%   - \usepackage{multirow} agregado para tablas con celdas fusionadas
+%   - interlinepenalty subido a 10000 (máximo absoluto)
+%   - Numeración de secciones del preámbulo reordenada
+%
+% CHANGELOG v1.1:
+%   - Títulos de capítulo/sección en azul, con línea divisoria bajo capítulo
+%   - Secciones numeradas (1.1, 1.1.1), subsección sin negrita
+%   - Sangría de primera línea (1.2em) + parskip
+%   - Colores de cajas: TODOS distintos (0 repeticiones)
+%   - Glosario compacto (\\[3pt] entre entradas)
+%   - Cajas con mayor separación (12pt antes/después)
+%   - Párrafos sin corte entre páginas (\\widowpenalty/\\clubpenalty máximos)
+%   - Página en blanco tras portada + TOC forzado a cantidad par de páginas
+%   - Portada: título de materia en azul
+
+\documentclass[12pt,a4paper,openany,twoside]{book}
+
+% ════════════════════════════════════════════════════════════════
+% 1. CODIFICACIÓN Y LENGUAJE
+% ════════════════════════════════════════════════════════════════
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish,es-tabla]{babel}
+
+% ════════════════════════════════════════════════════════════════
+% 2. TIPOGRAFÍA
+% ════════════════════════════════════════════════════════════════
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% ════════════════════════════════════════════════════════════════
+% 3. GEOMETRÍA Y ESPACIADO
+% ════════════════════════════════════════════════════════════════
+\usepackage[
+  top=2.3cm,
+  bottom=2.3cm,
+  left=2.6cm,
+  right=2.3cm,
+  headsep=0.5cm
+]{geometry}
+
+\usepackage{setspace}
+\setstretch{1.15}
+
+% Sangría de primera línea + espacio entre párrafos
+\setlength{\parindent}{1.2em}
+\setlength{\parskip}{3pt plus 1pt minus 1pt}
+
+\raggedbottom
+
+% ════════════════════════════════════════════════════════════════
+% 4. CONTROL DE COMPOSICIÓN
+% ════════════════════════════════════════════════════════════════
+\usepackage[none]{hyphenat}
+\usepackage{needspace}
+\usepackage{etoolbox}
+
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+% Evitar párrafos cortados entre páginas:
+% - widowpenalty/clubpenalty: evita líneas sueltas (viudas/huérfanas)
+% - interlinepenalty: penaliza CUALQUIER corte dentro de un párrafo
+%   (10000 = máximo absoluto; puede generar páginas cortas, preferible a párrafos cortados)
+\widowpenalty=10000
+\clubpenalty=10000
+\displaywidowpenalty=10000
+\predisplaypenalty=10000
+\postdisplaypenalty=10000
+\interlinepenalty=10000
+\emergencystretch=1.5em
+
+% Evita capítulos con poco contenido antes del salto de página
+\pretocmd{\chapter}{\Needspace{10\baselineskip}}{}{}
+
+% ════════════════════════════════════════════════════════════════
+% 5. PAQUETES MATEMÁTICOS
+% ════════════════════════════════════════════════════════════════
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% ════════════════════════════════════════════════════════════════
+% 6. TABLAS Y CAPTIONS
+% ════════════════════════════════════════════════════════════════
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{caption}
+% Separar caption de la tabla (skip=8pt agrega espacio debajo del título)
+\captionsetup[table]{skip=8pt, font=small, labelfont=bf}
+
+% ════════════════════════════════════════════════════════════════
+% 7. LISTAS
+% ════════════════════════════════════════════════════════════════
+\usepackage{enumitem}
+\setlist[itemize]{noitemsep, topsep=3pt, parsep=0pt, partopsep=0pt,
+                  before={\leavevmode\par\nopagebreak}}
+\setlist[enumerate]{noitemsep, topsep=3pt, parsep=0pt, partopsep=0pt}
+\setlist[description]{noitemsep, topsep=3pt, parsep=0pt, partopsep=0pt,
+                      style=nextline}
+
+% ════════════════════════════════════════════════════════════════
+% 8. COLORES
+% ════════════════════════════════════════════════════════════════
+\usepackage[dvipsnames]{xcolor}
+
+% Color principal (títulos, portada, links)
+\definecolor{azulPrincipal}{RGB}{0,102,170}
+
+% Fondos de cajas — TODOS DISTINTOS, sin repeticiones
+\definecolor{fondoDefinicion}{RGB}{225,238,255}    % azul suave
+\definecolor{fondoEjemplo}{RGB}{232,245,233}       % verde menta suave
+\definecolor{fondoDerivacion}{RGB}{240,240,240}     % gris neutro
+\definecolor{fondoFormula}{RGB}{237,231,246}         % lila suave
+\definecolor{fondoImportante}{RGB}{255,235,235}      % rosa suave
+\definecolor{fondoNota}{RGB}{255,249,219}            % amarillo cálido
+
+% Bordes de cajas — TODOS DISTINTOS
+\definecolor{bordeDefinicion}{RGB}{0,102,170}       % azul principal
+\definecolor{bordeEjemplo}{RGB}{46,125,50}          % verde oscuro
+\definecolor{bordeDerivacion}{RGB}{117,117,117}      % gris medio
+\definecolor{bordeFormula}{RGB}{106,27,154}          % púrpura
+\definecolor{bordeImportante}{RGB}{198,40,40}        % rojo
+\definecolor{bordeNota}{RGB}{245,160,0}              % naranja/ámbar
+
+% ════════════════════════════════════════════════════════════════
+% 9. CAJAS TEMÁTICAS
+% ════════════════════════════════════════════════════════════════
+% Seis tipos exactos. Cada uno con identidad visual ÚNICA.
+% Breakable: definicion/formula/importante/nota = NO,
+%            ejemplo/derivacion = SÍ (pueden ser largas).
+%
+\usepackage[most]{tcolorbox}
+
+\tcbset{
+  enhanced,
+  boxrule=0.8pt,
+  arc=1.5mm,
+  left=2mm,
+  right=2mm,
+  top=1.5mm,
+  bottom=1.5mm,
+  before skip=12pt,
+  after skip=12pt,
+  fonttitle=\bfseries,
+  coltitle=white
+}
+
+% AZUL — Definición: conceptos, leyes, principios
+\newtcolorbox{definicion}[1][]{
+  colback=fondoDefinicion,
+  colframe=bordeDefinicion,
+  colbacktitle=bordeDefinicion,
+  title={Definición},
+  breakable=false,
+  #1
+}
+
+% LILA — Fórmula: ecuaciones clave con nombre
+\newtcolorbox{formula}[1][]{
+  colback=fondoFormula,
+  colframe=bordeFormula,
+  colbacktitle=bordeFormula,
+  title={Fórmula},
+  breakable=false,
+  #1
+}
+
+% ROJO — Importante: advertencias, errores frecuentes
+\newtcolorbox{importante}[1][]{
+  colback=fondoImportante,
+  colframe=bordeImportante,
+  colbacktitle=bordeImportante,
+  title={Importante},
+  breakable=false,
+  #1
+}
+
+% AMARILLO — Nota: contexto adicional, aclaraciones
+\newtcolorbox{nota}[1][]{
+  colback=fondoNota,
+  colframe=bordeNota,
+  colbacktitle=bordeNota,
+  title={Nota},
+  breakable=false,
+  #1
+}
+
+% VERDE — Ejemplo: ejercicios resueltos, casos numéricos
+\newtcolorbox{ejemplo}[1][]{
+  colback=fondoEjemplo,
+  colframe=bordeEjemplo,
+  colbacktitle=bordeEjemplo,
+  title={Ejemplo},
+  breakable,
+  #1
+}
+
+% GRIS — Derivación: deducciones paso a paso
+\newtcolorbox{derivacion}[1][]{
+  colback=fondoDerivacion,
+  colframe=bordeDerivacion,
+  colbacktitle=bordeDerivacion,
+  title={Derivación},
+  breakable,
+  #1
+}
+
+% ════════════════════════════════════════════════════════════════
+% 10. ENCABEZADOS Y PIES
+% ════════════════════════════════════════════════════════════════
+\usepackage{fancyhdr}
+\setlength{\headheight}{14pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{azulPrincipal}\nouppercase{\leftmark}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyfoot[C]{\small\thepage}
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+% ════════════════════════════════════════════════════════════════
+% 11. TÍTULOS (con color, numeración y línea divisoria)
+% ════════════════════════════════════════════════════════════════
+\usepackage{titlesec}
+
+% Capítulo: azul, negrita, grande, número enorme, línea divisoria debajo
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries\color{azulPrincipal}\Large}
+  {\Huge\color{azulPrincipal}\thechapter}
+  {8pt}
+  {\LARGE\color{azulPrincipal}}
+  [\vspace{2pt}{\color{azulPrincipal}\titlerule[0.8pt]}]
+
+\titlespacing*{\chapter}{0pt}{-10pt}{8pt}
+
+% Sección: azul, negrita, numerada (1.1), tamaño large
+\titleformat{\section}
+  {\normalfont\bfseries\color{azulPrincipal}\large}
+  {\color{azulPrincipal}\thesection.}{0.5em}{}
+
+\titlespacing*{\section}{0pt}{14pt}{6pt}
+
+% Subsección: azul, SIN negrita, numerada (1.1.1), tamaño normal
+\titleformat{\subsection}
+  {\normalfont\color{azulPrincipal}\normalsize}
+  {\color{azulPrincipal}\thesubsection.}{0.5em}{}
+
+\titlespacing*{\subsection}{0pt}{10pt}{4pt}
+
+% ════════════════════════════════════════════════════════════════
+% 12. DIAGRAMAS
+% ════════════════════════════════════════════════════════════════
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, calc}
+\usepackage{multirow}
+
+% ════════════════════════════════════════════════════════════════
+% 13. HIPERVÍNCULOS — hyperref SIEMPRE último \usepackage
+% ════════════════════════════════════════════════════════════════
+\usepackage[
+  colorlinks=true,
+  linkcolor=azulPrincipal,
+  urlcolor=azulPrincipal,
+  citecolor=azulPrincipal,
+  bookmarks=true
+]{hyperref}
+
+% ════════════════════════════════════════════════════════════════
+% 14. COMANDOS EDITORIALES (no son \usepackage — van después)
+% ════════════════════════════════════════════════════════════════
+% Espaciado antes de secciones dentro de capítulo
+\newcommand{\secspace}{\vspace{4pt}}
+\newcommand{\subsecspace}{\vspace{2pt}}
+
+% Macros de jerarquía (usar SIEMPRE estas, nunca \chapter directo)
+\newcommand{\unidad}[1]{\chapter{#1}}
+\newcommand{\seccion}[1]{\secspace\section{#1}}
+\newcommand{\subseccion}[1]{\subsecspace\subsection{#1}}
+
+% Macros de matemática
+\newcommand{\sigla}[1]{\mathrm{#1}}
+\newcommand{\resultado}[1]{\mathbf{#1}}
+
+% ════════════════════════════════════════════════════════════════
+% 15. PORTADA + PÁGINA EN BLANCO + TOC PAR
+% ════════════════════════════════════════════════════════════════
+% Tres argumentos: {Nombre de materia}{Título de unidad}{Nombre cátedra}
+\newcommand{\manualtitle}[3]{
+\begin{titlepage}
+    \centering
+    \vspace*{1.8cm}
+
+    {\color{azulPrincipal}\rule{\textwidth}{1.4pt}\par}
+    \vspace{0.35cm}
+
+    {\Huge\bfseries\color{azulPrincipal} #1\par}
+    \vspace{0.3cm}
+    {\Large Manual de estudio\par}
+    \vspace{0.25cm}
+    {\Large\bfseries #2\par}
+
+    \vspace{0.35cm}
+    {\color{azulPrincipal}\rule{\textwidth}{1.4pt}\par}
+
+    \vfill
+
+    {\large Universidad Tecnológica Nacional\par}
+    {\large Facultad Regional Bahía Blanca\par}
+    {\large Licenciatura en Organización Industrial\par}
+
+    \vspace{1.2cm}
+
+    {\large Cátedra: #3\par}
+
+    \vfill
+
+    {\small Basado en material de cátedra y bibliografía provista\par}
+\end{titlepage}
+% Página en blanco tras portada (reverso de portada en doble faz)
+\thispagestyle{empty}\cleardoublepage
+}
+
+% Comando para forzar que el TOC termine en página par
+\newcommand{\tocpar}{%
+  \tableofcontents
+  \cleardoublepage
+}
+
+% ════════════════════════════════════════════════════════════════
+% 16. APÉNDICE (opcional, solo materias cuantitativas)
+% ════════════════════════════════════════════════════════════════
+\newcommand{\apendice}{%
+  \chapter*{Apéndice}%
+  \addcontentsline{toc}{chapter}{Apéndice}%
+  \markboth{Apéndice}{}%
+}
+
+% ════════════════════════════════════════════════════════════════
+% 17. GLOSARIO (capítulo no numerado, compacto)
+% ════════════════════════════════════════════════════════════════
+\newcommand{\glosario}{%
+  \chapter*{Glosario de términos clave}%
+  \addcontentsline{toc}{chapter}{Glosario de términos clave}%
+  \markboth{Glosario de términos clave}{}%
+}
+% Formato de entrada del glosario: \glsentry{Término}{Definición}
+\newcommand{\glsentry}[2]{%
+  \noindent\textbf{#1}\par\nopagebreak
+  {\small #2}\par\vspace{3pt}%
+}
+
+% ╔══════════════════════════════════════════════════════════════════╗
+% ║  FIN DEL PREÁMBULO — NO MODIFICAR NADA ARRIBA DE ESTA LÍNEA   ║
+% ╚══════════════════════════════════════════════════════════════════╝
+
+\begin{document}
+
+% ── METADATOS (completar para cada manual) ──────────────────────
+\manualtitle
+  {<<Nombre de la materia>>}
+  {<<Unidad N: Título de la unidad>>}
+  {<<Apellido del titular>>}
+
+\tocpar
+
+% ── CONTENIDO (empieza acá) ─────────────────────────────────────
+
+% Usar: \unidad{}, \seccion{}, \subseccion{}
+% Cajas: definicion, ejemplo, derivacion, formula, importante, nota
+% Tablas: tabularx con booktabs (toprule, midrule, bottomrule)
+% Matemática: equation, align, \sigla{}, \resultado{}
+% Listas: itemize o enumerate (cortas, dentro de prosa o cajas)
+
+% ── APÉNDICE (opcional, solo materias cuantitativas) ────────────
+% \apendice
+% Tablas de constantes, datos atómicos, etc.
+
+% ── GLOSARIO (siempre al final) ─────────────────────────────────
+\glosario
+
+% Formato: \glsentry{Término}{Definición concisa en 1-3 líneas.}
+
+\end{document}
