@@ -17,8 +17,10 @@ export async function readZipFile(file) {
     });
   }
 
-  return entries;
-}
+  return {
+  entries,
+  zip
+};
 
 function getExtension(filename) {
   const parts = filename.split(".");
