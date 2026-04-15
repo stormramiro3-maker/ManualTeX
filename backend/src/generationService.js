@@ -8,7 +8,7 @@ const client = new Anthropic({
 });
 
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
-const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '6000', 10);
+const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '7000', 10);
 
 const skillPath = path.join(__dirname, 'SKILL.md');
 const SKILL_TEXT = fs.existsSync(skillPath)
@@ -72,6 +72,7 @@ async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS) {
 
   const repairSystem = `Sos un reparador estricto de JSON.
 Convertí una salida inválida a JSON válido sin explicar nada.
+
 Reglas:
 - Respondé SOLO JSON válido
 - No uses markdown
@@ -99,7 +100,7 @@ ${first.text}`;
   };
 }
 
-function trimDocText(text = '', maxChars = 16000) {
+function trimDocText(text = '', maxChars = 18000) {
   if (!text) return '';
   return text.length <= maxChars ? text : text.slice(0, maxChars);
 }
@@ -123,18 +124,42 @@ REGLAS CRÍTICAS:
 - No cambies el alcance de la unidad.
 - Si una fuente desarrolla un concepto en profundidad, el manual debe mantener o superar esa profundidad.
 - Teoría y práctica deben integrarse según la estructura aprobada.
-- Cuando corresponda, incluir definiciones, fórmulas, ejemplos, derivaciones, notas e importantes, pero siempre subordinados a la prosa.
 - No generes LaTeX.
 - Respondé SOLO JSON válido.
+- Priorizá robustez del formato JSON por encima de sofisticación estructural.
+- Cada sección debe venir como texto corrido rico y bien desarrollado.
 
 === PROTOCOLO EDITORIAL BASE ===
 ${SKILL_TEXT || '(SKILL.md no disponible)'}`;
 }
 
-function sanitizeSectionTitle(title = '') {
-  return String(title)
+function cleanTitle(text = '', fallback = 'Sin título') {
+  const stripped = String(text)
     .replace(/^\d+(\.\d+)*\s*/g, '')
     .trim();
+  return stripped || fallback;
+}
+
+function normalizeChapterJson(chapterJson, fallbackTitle) {
+  return {
+    title: cleanTitle(chapterJson.title, fallbackTitle),
+    intro: String(chapterJson.intro || '').trim(),
+    sections: Array.isArray(chapterJson.sections)
+      ? chapterJson.sections.map((section, idx) => ({
+          title: cleanTitle(section.title, `Sección ${idx + 1}`),
+          content: String(section.content || '').trim()
+        }))
+      : [],
+    closing: String(chapterJson.closing || '').trim(),
+    glossary_terms: Array.isArray(chapterJson.glossary_terms)
+      ? chapterJson.glossary_terms
+          .filter((x) => x && x.term && x.definition)
+          .map((x) => ({
+            term: String(x.term).trim(),
+            definition: String(x.definition).trim()
+          }))
+      : []
+  };
 }
 
 async function generateChapterContent(corpus, chapter, chapterIndex) {
@@ -145,7 +170,7 @@ async function generateChapterContent(corpus, chapter, chapterIndex) {
     pages: doc.pages,
     chars: doc.chars,
     preliminary_category: doc.preliminary_category,
-    text: trimDocText(doc.text, 16000)
+    text: trimDocText(doc.text, 18000)
   }));
 
   const system = buildSystemPrompt();
@@ -162,64 +187,28 @@ FUENTES DISPONIBLES PARA ESTE CAPÍTULO:
 ${JSON.stringify(reducedDocs, null, 2)}
 
 OBJETIVO:
-- Escribir un capítulo académicamente sólido y editorialmente rico.
-- Respetar la estructura aprobada.
-- Priorizar prosa narrativa profunda.
-- Usar bloques editoriales cuando aporten valor pedagógico real.
-- Mantener alcance estricto del corpus.
+- Redactar un capítulo sólido, profundo, útil para estudiar.
+- Mantener la densidad académica.
+- Respetar el alcance del corpus.
+- Desarrollar cada sección con prosa continua y buena conexión conceptual.
+- Si el capítulo es práctico, explicar la lógica de los ejercicios y su sentido conceptual.
+
+IMPORTANTE:
+- No uses bloques complejos.
+- No uses arrays innecesarios.
+- Hacé el JSON robusto y simple.
 
 Respondé EXACTAMENTE con este esquema JSON:
 {
   "title": "string",
-  "intro_paragraphs": ["string", "string"],
+  "intro": "string",
   "sections": [
     {
       "title": "string",
-      "opening_paragraphs": ["string", "string"],
-      "blocks": [
-        {
-          "type": "paragraph",
-          "text": "string"
-        },
-        {
-          "type": "definicion",
-          "title": "string",
-          "text": "string"
-        },
-        {
-          "type": "nota",
-          "title": "string",
-          "text": "string"
-        },
-        {
-          "type": "importante",
-          "title": "string",
-          "text": "string"
-        },
-        {
-          "type": "formula",
-          "title": "string",
-          "intro": "string",
-          "latex": "string",
-          "outro": "string"
-        },
-        {
-          "type": "ejemplo",
-          "title": "string",
-          "text": "string"
-        },
-        {
-          "type": "derivacion",
-          "title": "string",
-          "intro": "string",
-          "steps": ["string", "string"],
-          "outro": "string"
-        }
-      ],
-      "closing_paragraphs": ["string", "string"]
+      "content": "string"
     }
   ],
-  "chapter_closing_paragraphs": ["string"],
+  "closing": "string",
   "glossary_terms": [
     {
       "term": "string",
@@ -230,23 +219,11 @@ Respondé EXACTAMENTE con este esquema JSON:
 
   const result = await callClaudeJson(system, prompt, 5200);
 
-  const chapterJson = result.json;
-
   return {
-    json: {
-      title: sanitizeSectionTitle(chapterJson.title || chapter.title || `Capítulo ${chapterIndex + 1}`),
-      intro_paragraphs: Array.isArray(chapterJson.intro_paragraphs) ? chapterJson.intro_paragraphs : [],
-      sections: Array.isArray(chapterJson.sections) ? chapterJson.sections.map((s) => ({
-        title: sanitizeSectionTitle(s.title || ''),
-        opening_paragraphs: Array.isArray(s.opening_paragraphs) ? s.opening_paragraphs : [],
-        blocks: Array.isArray(s.blocks) ? s.blocks : [],
-        closing_paragraphs: Array.isArray(s.closing_paragraphs) ? s.closing_paragraphs : []
-      })) : [],
-      chapter_closing_paragraphs: Array.isArray(chapterJson.chapter_closing_paragraphs)
-        ? chapterJson.chapter_closing_paragraphs
-        : [],
-      glossary_terms: Array.isArray(chapterJson.glossary_terms) ? chapterJson.glossary_terms : []
-    },
+    json: normalizeChapterJson(
+      result.json,
+      chapter.title || `Capítulo ${chapterIndex + 1}`
+    ),
     usage: result.usage
   };
 }
