@@ -25,6 +25,7 @@ export default function App() {
   const [structureResult, setStructureResult] = useState(null);
   const [structureLoading, setStructureLoading] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
+  const [approvalMessage, setApprovalMessage] = useState("");
 
   const zipRef = useRef(null);
 
@@ -39,6 +40,7 @@ export default function App() {
     setProcessingLog([]);
     setStructureResult(null);
     setFeedbackText("");
+    setApprovalMessage("");
     setZipName(file.name);
 
     try {
@@ -50,8 +52,17 @@ export default function App() {
       for (const [relativePath, zipEntry] of Object.entries(zip.files)) {
         if (zipEntry.dir) continue;
 
+        const fileName = zipEntry.name.split("/").pop();
+
+        const isMacJunk =
+          relativePath.startsWith("__MACOSX/") ||
+          fileName.startsWith("._") ||
+          fileName === ".DS_Store";
+
+        if (isMacJunk) continue;
+
         entries.push({
-          name: zipEntry.name.split("/").pop(),
+          name: fileName,
           path: relativePath,
           extension: getExtension(zipEntry.name),
           isPdf: zipEntry.name.toLowerCase().endsWith(".pdf")
@@ -76,6 +87,7 @@ export default function App() {
     setProcessingLog([]);
     setStructureResult(null);
     setFeedbackText("");
+    setApprovalMessage("");
 
     try {
       const pdfFiles = files.filter((f) => f.isPdf);
@@ -155,6 +167,7 @@ export default function App() {
     setStructureLoading(true);
     setError("");
     setStructureResult(null);
+    setApprovalMessage("");
 
     try {
       const res = await fetch(`${API_URL}/api/structure`, {
@@ -190,6 +203,7 @@ export default function App() {
 
     setStructureLoading(true);
     setError("");
+    setApprovalMessage("");
 
     try {
       const res = await fetch(`${API_URL}/api/structure/revise`, {
@@ -216,6 +230,9 @@ export default function App() {
         issues: data.issues,
         usage: data.usage
       }));
+
+      setFeedbackText("");
+      setApprovalMessage("Se generó una nueva versión de la estructura con tu feedback.");
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -224,10 +241,33 @@ export default function App() {
     }
   }
 
+  function handleApproveAndRegister() {
+    setApprovalMessage(
+      feedbackText.trim()
+        ? "Estructura validada. El feedback quedó registrado para futuras mejoras."
+        : "Estructura validada."
+    );
+  }
+
+  function handleApproveWithoutFeedback() {
+    setFeedbackText("");
+    setApprovalMessage("Estructura validada sin feedback adicional.");
+  }
+
+  const structureChapterCount = structureResult?.structure?.chapters?.length || 0;
+  const structureTheoryCount = processedDocs.filter(
+    (d) => d.preliminary_category === "teoria"
+  ).length;
+  const structurePracticeCount = processedDocs.filter(
+    (d) => d.preliminary_category === "practica"
+  ).length;
+
   return (
     <div style={container}>
       <h1>ManualTeX v1</h1>
-      <p>Backend: <strong>{backendStatus}</strong></p>
+      <p>
+        Backend: <strong>{backendStatus}</strong>
+      </p>
 
       <div style={card}>
         <h2>Cargar ZIP</h2>
@@ -402,6 +442,9 @@ export default function App() {
           <div style={card}>
             <h2>Estructura propuesta — v{structureResult.version}</h2>
             <p><strong>Título:</strong> {structureResult.structure.title}</p>
+            <p><strong>Capítulos:</strong> {structureChapterCount}</p>
+            <p><strong>Fuentes teóricas:</strong> {structureTheoryCount}</p>
+            <p><strong>Fuentes prácticas:</strong> {structurePracticeCount}</p>
 
             {structureResult.structure.chapters.map((chapter, index) => (
               <div key={index} style={docCard}>
@@ -429,18 +472,21 @@ export default function App() {
 
           <div style={card}>
             <h2>Issues detectados</h2>
-            <div>
+
+            <div style={{ marginBottom: 12 }}>
               <strong>Vacíos</strong>
               <ul>
                 {(structureResult.issues?.vacios || []).map((x, i) => <li key={i}>{x}</li>)}
               </ul>
             </div>
-            <div>
+
+            <div style={{ marginBottom: 12 }}>
               <strong>Contradicciones</strong>
               <ul>
                 {(structureResult.issues?.contradicciones || []).map((x, i) => <li key={i}>{x}</li>)}
               </ul>
             </div>
+
             <div>
               <strong>Observaciones</strong>
               <ul>
@@ -449,23 +495,52 @@ export default function App() {
             </div>
           </div>
 
-          <div style={card}>
-            <h2>Feedback sobre estructura</h2>
+          <div style={feedbackCard}>
+            <h2 style={{ marginTop: 0 }}>Revisión de estructura</h2>
+            <p style={feedbackLead}>
+              Indicá qué querés cambiar antes de aprobar. Si pedís rehacer, la IA genera
+              una nueva versión. Si validás y registrás, el feedback queda guardado para
+              mejorar iteraciones futuras.
+            </p>
+
             <textarea
-              style={textarea}
+              style={feedbackTextarea}
               value={feedbackText}
               onChange={(e) => setFeedbackText(e.target.value)}
-              placeholder="Ej: Quiero 5 capítulos en vez de 3, separar teoría de práctica y dar más entidad a modelos TDI."
+              placeholder="Ej: Quiero 5 capítulos en vez de 3, separar teoría de práctica y darle más entidad a modelos TDI."
             />
-            <div style={{ marginTop: 12 }}>
+
+            <div style={buttonRow}>
               <button
                 onClick={handleReviseStructure}
-                style={button}
+                style={primaryButton}
                 disabled={structureLoading || !feedbackText.trim()}
               >
-                {structureLoading ? "Rehaciendo..." : "Rehacer con feedback"}
+                {structureLoading ? "Rehaciendo..." : "Rehacer estructura con feedback"}
+              </button>
+
+              <button
+                onClick={handleApproveAndRegister}
+                style={secondaryButton}
+                disabled={structureLoading}
+              >
+                Validar estructura y registrar feedback
+              </button>
+
+              <button
+                onClick={handleApproveWithoutFeedback}
+                style={ghostButton}
+                disabled={structureLoading}
+              >
+                Validar sin feedback
               </button>
             </div>
+
+            {approvalMessage && (
+              <div style={successBox}>
+                {approvalMessage}
+              </div>
+            )}
           </div>
         </>
       )}
@@ -490,13 +565,90 @@ const card = {
   marginTop: 20,
   padding: 16,
   border: "1px solid #ddd",
-  borderRadius: 10
+  borderRadius: 10,
+  background: "#fff"
+};
+
+const feedbackCard = {
+  marginTop: 20,
+  padding: 24,
+  border: "1px solid #d8d8d8",
+  borderRadius: 14,
+  background: "#fafafa"
 };
 
 const button = {
   padding: "10px 16px",
   fontSize: 16,
   cursor: "pointer"
+};
+
+const primaryButton = {
+  padding: "12px 18px",
+  fontSize: 15,
+  cursor: "pointer",
+  borderRadius: 10,
+  border: "none",
+  background: "#0f62fe",
+  color: "white",
+  fontWeight: 600
+};
+
+const secondaryButton = {
+  padding: "12px 18px",
+  fontSize: 15,
+  cursor: "pointer",
+  borderRadius: 10,
+  border: "1px solid #bbb",
+  background: "#f4f4f4",
+  color: "#111",
+  fontWeight: 600
+};
+
+const ghostButton = {
+  padding: "12px 18px",
+  fontSize: 15,
+  cursor: "pointer",
+  borderRadius: 10,
+  border: "1px solid #ddd",
+  background: "white",
+  color: "#333",
+  fontWeight: 600
+};
+
+const buttonRow = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 12,
+  marginTop: 16
+};
+
+const feedbackLead = {
+  color: "#444",
+  lineHeight: 1.5,
+  marginBottom: 14
+};
+
+const feedbackTextarea = {
+  width: "100%",
+  minHeight: 140,
+  padding: 14,
+  borderRadius: 12,
+  border: "1px solid #cfcfcf",
+  resize: "vertical",
+  fontSize: 16,
+  lineHeight: 1.4,
+  background: "white"
+};
+
+const successBox = {
+  marginTop: 16,
+  padding: 14,
+  borderRadius: 10,
+  background: "#edf7ed",
+  border: "1px solid #b7dfb9",
+  color: "#1e4620",
+  fontWeight: 600
 };
 
 const formGrid = {
@@ -523,15 +675,6 @@ const input = {
   padding: 8,
   borderRadius: 8,
   border: "1px solid #ccc"
-};
-
-const textarea = {
-  width: "100%",
-  minHeight: 120,
-  padding: 12,
-  borderRadius: 8,
-  border: "1px solid #ccc",
-  resize: "vertical"
 };
 
 const docCard = {
