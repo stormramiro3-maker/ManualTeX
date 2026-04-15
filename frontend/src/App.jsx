@@ -31,6 +31,10 @@ export default function App() {
   const [generatedTex, setGeneratedTex] = useState("");
   const [texUsage, setTexUsage] = useState(null);
 
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfBase64, setPdfBase64] = useState("");
+  const [compileLog, setCompileLog] = useState("");
+
   const zipRef = useRef(null);
 
   async function handleZipChange(event) {
@@ -47,6 +51,8 @@ export default function App() {
     setApprovalMessage("");
     setGeneratedTex("");
     setTexUsage(null);
+    setPdfBase64("");
+    setCompileLog("");
     setZipName(file.name);
 
     try {
@@ -96,6 +102,8 @@ export default function App() {
     setApprovalMessage("");
     setGeneratedTex("");
     setTexUsage(null);
+    setPdfBase64("");
+    setCompileLog("");
 
     try {
       const pdfFiles = files.filter((f) => f.isPdf);
@@ -178,6 +186,8 @@ export default function App() {
     setApprovalMessage("");
     setGeneratedTex("");
     setTexUsage(null);
+    setPdfBase64("");
+    setCompileLog("");
 
     try {
       const res = await fetch(`${API_URL}/api/structure`, {
@@ -216,6 +226,8 @@ export default function App() {
     setApprovalMessage("");
     setGeneratedTex("");
     setTexUsage(null);
+    setPdfBase64("");
+    setCompileLog("");
 
     try {
       const res = await fetch(`${API_URL}/api/structure/revise`, {
@@ -273,6 +285,8 @@ export default function App() {
     setError("");
     setGeneratedTex("");
     setTexUsage(null);
+    setPdfBase64("");
+    setCompileLog("");
 
     try {
       const res = await fetch(`${API_URL}/api/generate-tex`, {
@@ -302,6 +316,39 @@ export default function App() {
     }
   }
 
+  async function handleCompilePdf() {
+    if (!generatedTex) return;
+
+    setPdfLoading(true);
+    setError("");
+    setPdfBase64("");
+    setCompileLog("");
+
+    try {
+      const res = await fetch(`${API_URL}/api/compile-pdf`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ tex: generatedTex })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Error compilando PDF");
+      }
+
+      setPdfBase64(data.pdf_base64 || "");
+      setCompileLog(data.compile_log || "");
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      setPdfLoading(false);
+    }
+  }
+
   function downloadTex() {
     if (!generatedTex) return;
 
@@ -311,6 +358,28 @@ export default function App() {
     a.href = url;
     a.download = "manualtex-draft.tex";
     a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadPdf() {
+    if (!pdfBase64) return;
+
+    const byteChars = atob(pdfBase64);
+    const byteNumbers = new Array(byteChars.length);
+
+    for (let i = 0; i < byteChars.length; i++) {
+      byteNumbers[i] = byteChars.charCodeAt(i);
+    }
+
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "manualtex-output.pdf";
+    a.click();
+
     URL.revokeObjectURL(url);
   }
 
@@ -330,7 +399,6 @@ export default function App() {
       <div style={card}>
         <h2>Cargar ZIP</h2>
         <input type="file" accept=".zip" onChange={handleZipChange} />
-
         {zipName && <p><strong>ZIP:</strong> {zipName}</p>}
         {loading && <p>Leyendo...</p>}
         {error && <p style={{ color: "crimson" }}>{error}</p>}
@@ -369,38 +437,22 @@ export default function App() {
             <div style={formGrid}>
               <label style={label}>
                 Materia
-                <input
-                  style={input}
-                  value={metadata.materia}
-                  onChange={(e) => updateMetadata("materia", e.target.value)}
-                />
+                <input style={input} value={metadata.materia} onChange={(e) => updateMetadata("materia", e.target.value)} />
               </label>
 
               <label style={label}>
                 Unidad
-                <input
-                  style={input}
-                  value={metadata.unidad}
-                  onChange={(e) => updateMetadata("unidad", e.target.value)}
-                />
+                <input style={input} value={metadata.unidad} onChange={(e) => updateMetadata("unidad", e.target.value)} />
               </label>
 
               <label style={label}>
                 Cátedra
-                <input
-                  style={input}
-                  value={metadata.catedra}
-                  onChange={(e) => updateMetadata("catedra", e.target.value)}
-                />
+                <input style={input} value={metadata.catedra} onChange={(e) => updateMetadata("catedra", e.target.value)} />
               </label>
 
               <label style={label}>
                 Tipo
-                <select
-                  style={input}
-                  value={metadata.tipo}
-                  onChange={(e) => updateMetadata("tipo", e.target.value)}
-                >
+                <select style={input} value={metadata.tipo} onChange={(e) => updateMetadata("tipo", e.target.value)}>
                   <option value="">Seleccionar</option>
                   <option value="exacta">Exacta</option>
                   <option value="humanistica">Humanística</option>
@@ -449,9 +501,7 @@ export default function App() {
                 </div>
 
                 <details>
-                  <summary style={{ cursor: "pointer", marginBottom: 8 }}>
-                    Ver preview
-                  </summary>
+                  <summary style={{ cursor: "pointer", marginBottom: 8 }}>Ver preview</summary>
                   <div style={previewBox}>
                     {doc.preview || "(sin texto extraído)"}
                   </div>
@@ -461,34 +511,8 @@ export default function App() {
           </div>
 
           <div style={card}>
-            <h2>Vista JSON resumida del corpus</h2>
-            <pre style={jsonBox}>
-              {JSON.stringify(
-                {
-                  metadata: corpus.metadata,
-                  stats: corpus.stats,
-                  documents: corpus.documents.map((d) => ({
-                    name: d.name,
-                    path: d.path,
-                    pages: d.pages,
-                    chars: d.chars,
-                    preliminary_category: d.preliminary_category,
-                    preview: d.preview
-                  }))
-                },
-                null,
-                2
-              )}
-            </pre>
-          </div>
-
-          <div style={card}>
             <h2>Estructura</h2>
-            <button
-              onClick={handleGenerateStructure}
-              style={button}
-              disabled={structureLoading}
-            >
+            <button onClick={handleGenerateStructure} style={button} disabled={structureLoading}>
               {structureLoading ? "Generando..." : "Generar estructura"}
             </button>
           </div>
@@ -511,17 +535,13 @@ export default function App() {
 
                 <p><strong>Fuentes:</strong></p>
                 <ul>
-                  {chapter.source_documents.map((src, i) => (
-                    <li key={i}>{src}</li>
-                  ))}
+                  {chapter.source_documents.map((src, i) => <li key={i}>{src}</li>)}
                 </ul>
 
                 <p><strong>Secciones:</strong></p>
                 <ul>
                   {chapter.sections.map((section, i) => (
-                    <li key={i}>
-                      <strong>{section.title}</strong>: {section.descriptor}
-                    </li>
+                    <li key={i}><strong>{section.title}</strong>: {section.descriptor}</li>
                   ))}
                 </ul>
               </div>
@@ -533,39 +553,32 @@ export default function App() {
 
             <div style={{ marginBottom: 12 }}>
               <strong>Vacíos</strong>
-              <ul>
-                {(structureResult.issues?.vacios || []).map((x, i) => <li key={i}>{x}</li>)}
-              </ul>
+              <ul>{(structureResult.issues?.vacios || []).map((x, i) => <li key={i}>{x}</li>)}</ul>
             </div>
 
             <div style={{ marginBottom: 12 }}>
               <strong>Contradicciones</strong>
-              <ul>
-                {(structureResult.issues?.contradicciones || []).map((x, i) => <li key={i}>{x}</li>)}
-              </ul>
+              <ul>{(structureResult.issues?.contradicciones || []).map((x, i) => <li key={i}>{x}</li>)}</ul>
             </div>
 
             <div>
               <strong>Observaciones</strong>
-              <ul>
-                {(structureResult.issues?.observaciones || []).map((x, i) => <li key={i}>{x}</li>)}
-              </ul>
+              <ul>{(structureResult.issues?.observaciones || []).map((x, i) => <li key={i}>{x}</li>)}</ul>
             </div>
           </div>
 
           <div style={feedbackCard}>
             <h2 style={{ marginTop: 0 }}>Revisión de estructura</h2>
             <p style={feedbackLead}>
-              Indicá qué querés cambiar antes de aprobar. Si pedís rehacer, la IA genera
-              una nueva versión. Si validás y registrás, el feedback queda guardado para
-              mejorar iteraciones futuras.
+              Indicá qué querés cambiar antes de aprobar. Si pedís rehacer, la IA genera una nueva versión.
+              Si validás y registrás, el feedback queda guardado para mejorar iteraciones futuras.
             </p>
 
             <textarea
               style={feedbackTextarea}
               value={feedbackText}
               onChange={(e) => setFeedbackText(e.target.value)}
-              placeholder="Ej: Quiero 5 capítulos en vez de 3, separar teoría de práctica y darle más entidad a modelos TDI."
+              placeholder="Ej: Separar teoría y práctica con más claridad, o dar más entidad a cierto tema."
             />
 
             <div style={buttonRow}>
@@ -577,49 +590,40 @@ export default function App() {
                 {structureLoading ? "Rehaciendo..." : "Rehacer estructura con feedback"}
               </button>
 
-              <button
-                onClick={handleApproveAndRegister}
-                style={secondaryButton}
-                disabled={structureLoading}
-              >
+              <button onClick={handleApproveAndRegister} style={secondaryButton} disabled={structureLoading}>
                 Validar estructura y registrar feedback
               </button>
 
-              <button
-                onClick={handleApproveWithoutFeedback}
-                style={ghostButton}
-                disabled={structureLoading}
-              >
+              <button onClick={handleApproveWithoutFeedback} style={ghostButton} disabled={structureLoading}>
                 Validar sin feedback
               </button>
             </div>
 
-            {approvalMessage && (
-              <div style={successBox}>
-                {approvalMessage}
-              </div>
-            )}
+            {approvalMessage && <div style={successBox}>{approvalMessage}</div>}
           </div>
 
           <div style={card}>
             <h2>Generación de .tex</h2>
-            <p>
-              Cuando esta estructura te cierre, generá un borrador `.tex` a partir de
-              la estructura aprobada y el corpus procesado.
-            </p>
-
             <div style={buttonRow}>
-              <button
-                onClick={handleGenerateTex}
-                style={primaryButton}
-                disabled={texLoading}
-              >
+              <button onClick={handleGenerateTex} style={primaryButton} disabled={texLoading}>
                 {texLoading ? "Generando .tex..." : "Generar .tex"}
               </button>
 
               {generatedTex && (
                 <button onClick={downloadTex} style={secondaryButton}>
                   Descargar .tex
+                </button>
+              )}
+
+              {generatedTex && (
+                <button onClick={handleCompilePdf} style={ghostButton} disabled={pdfLoading}>
+                  {pdfLoading ? "Compilando PDF..." : "Compilar PDF"}
+                </button>
+              )}
+
+              {pdfBase64 && (
+                <button onClick={downloadPdf} style={secondaryButton}>
+                  Descargar PDF
                 </button>
               )}
             </div>
@@ -635,6 +639,13 @@ export default function App() {
             <div style={card}>
               <h2>Preview del .tex generado</h2>
               <pre style={jsonBox}>{generatedTex}</pre>
+            </div>
+          )}
+
+          {compileLog && (
+            <div style={card}>
+              <h2>Log de compilación</h2>
+              <pre style={jsonBox}>{compileLog}</pre>
             </div>
           )}
         </>
