@@ -8,7 +8,7 @@ const client = new Anthropic({
 });
 
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
-const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '4000', 10);
+const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '6000', 10);
 
 const skillPath = path.join(__dirname, 'SKILL.md');
 const SKILL_TEXT = fs.existsSync(skillPath)
@@ -70,24 +70,24 @@ async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS) {
     };
   }
 
-  const repairSystem = `Sos un reparador de JSON.
-Tu única tarea es convertir una salida inválida a JSON válido.
+  const repairSystem = `Sos un reparador estricto de JSON.
+Convertí una salida inválida a JSON válido sin explicar nada.
 Reglas:
 - Respondé SOLO JSON válido
 - No uses markdown
 - No uses backticks
-- No agregues explicación
+- No agregues texto fuera del JSON
 - Conservá el contenido conceptual original`;
 
-  const repairPrompt = `Convertí esta salida en JSON válido, sin cambiar su sentido:
+  const repairPrompt = `Convertí esto a JSON válido:
 
 ${first.text}`;
 
-  const repaired = await callClaudeText(repairSystem, repairPrompt, 2500);
+  const repaired = await callClaudeText(repairSystem, repairPrompt, 3000);
   json = extractJson(repaired.text);
 
   if (!json) {
-    throw new Error('Claude devolvió JSON inválido en generación de capítulo');
+    throw new Error('Claude devolvió JSON inválido en generación del manual');
   }
 
   return {
@@ -99,56 +99,42 @@ ${first.text}`;
   };
 }
 
+function trimDocText(text = '', maxChars = 16000) {
+  if (!text) return '';
+  return text.length <= maxChars ? text : text.slice(0, maxChars);
+}
+
 function getDocsForChapter(corpus, chapter) {
   const names = new Set(chapter.source_documents || []);
   return corpus.documents.filter((doc) => names.has(doc.name));
 }
 
-function trimDocText(text = '', maxChars = 14000) {
-  if (!text) return '';
-  return text.length <= maxChars ? text : text.slice(0, maxChars);
-}
+function buildSystemPrompt() {
+  return `Sos el motor editorial de ManualTeX.
 
-function buildEditorialSystemPrompt() {
-  const distilledRules = `
-Aplicá estas reglas editoriales de forma estricta:
-- El manual NO es un resumen: reconstruye conocimiento.
-- La prosa narrativa es el vehículo principal del manual.
-- Cada sección debe explicar, conectar, cerrar y no solo enumerar.
-- No abrir secciones con cajas ni con fórmulas aisladas.
-- La sección debe tener introducción, desarrollo y cierre conceptual.
-- No comprimir demasiado: mantener profundidad.
-- Separar teoría y práctica si la estructura lo indica.
-- No inventar temas fuera del corpus.
-- Todo debe ser útil para estudio universitario real.
-- El tono debe ser académico, claro y autosuficiente.
-- Evitá listas salvo cuando sean indispensables.
-- Priorizá párrafos sustanciales y conectados entre sí.
-- Si el capítulo es práctico, integrar aplicación guiada, no simple enunciado.`;
+Tu tarea es generar el contenido de un manual universitario siguiendo de manera estricta el protocolo editorial base.
 
-  return `Sos un redactor académico experto en manuales de estudio universitarios.
-
-Tu tarea es desarrollar capítulos de un manual con calidad editorial alta, siguiendo un protocolo académico estricto.
-
-${distilledRules}
-
-A continuación se adjunta el protocolo editorial base de referencia. Seguilo en espíritu y prioridad, pero respondé únicamente en el formato JSON solicitado.
-
-=== PROTOCOLO BASE ===
-${SKILL_TEXT || '(SKILL.md no disponible en runtime)'}
-
-=== RESTRICCIONES TÉCNICAS DE ESTA FASE ===
+REGLAS CRÍTICAS:
+- El manual NO es un resumen. Reconstruye conocimiento.
+- La prosa argumentativa es el vehículo principal.
+- Cada sección debe tener introducción, desarrollo profundo e implicancias.
+- No se permite listar contenido sin explicar.
+- No inventes temas fuera del corpus.
+- No cambies el alcance de la unidad.
+- Si una fuente desarrolla un concepto en profundidad, el manual debe mantener o superar esa profundidad.
+- Teoría y práctica deben integrarse según la estructura aprobada.
+- Cuando corresponda, incluir definiciones, fórmulas, ejemplos, derivaciones, notas e importantes, pero siempre subordinados a la prosa.
 - No generes LaTeX.
 - Respondé SOLO JSON válido.
-- No uses markdown.
-- No uses backticks.
-- No generes tablas ni cajas como salida estructural todavía.
-- La profundidad debe quedar reflejada en la prosa.
-- Cada sección debe contener entre 3 y 5 párrafos sustanciales cuando el tema lo permita.
-- Cada capítulo debe incluir:
-  1. intro
-  2. desarrollo por secciones
-  3. cierre conceptual`;
+
+=== PROTOCOLO EDITORIAL BASE ===
+${SKILL_TEXT || '(SKILL.md no disponible)'}`;
+}
+
+function sanitizeSectionTitle(title = '') {
+  return String(title)
+    .replace(/^\d+(\.\d+)*\s*/g, '')
+    .trim();
 }
 
 async function generateChapterContent(corpus, chapter, chapterIndex) {
@@ -159,40 +145,81 @@ async function generateChapterContent(corpus, chapter, chapterIndex) {
     pages: doc.pages,
     chars: doc.chars,
     preliminary_category: doc.preliminary_category,
-    text: trimDocText(doc.text, 14000)
+    text: trimDocText(doc.text, 16000)
   }));
 
-  const system = buildEditorialSystemPrompt();
+  const system = buildSystemPrompt();
 
-  const prompt = `Desarrollá el capítulo ${chapterIndex + 1} del manual.
+  const prompt = `Desarrollá el capítulo ${chapterIndex + 1} de un manual universitario.
 
-METADATA DEL MANUAL:
+METADATA:
 ${JSON.stringify(corpus.metadata, null, 2)}
 
-CAPÍTULO A DESARROLLAR:
+ESTRUCTURA DEL CAPÍTULO:
 ${JSON.stringify(chapter, null, 2)}
 
 FUENTES DISPONIBLES PARA ESTE CAPÍTULO:
 ${JSON.stringify(reducedDocs, null, 2)}
 
-OBJETIVO EDITORIAL:
-- Escribir un capítulo con densidad explicativa real.
-- No resumir en exceso.
-- Construir comprensión, no solo listar información.
-- Mantener coherencia con una unidad universitaria.
-- Si el capítulo es práctico, explicar el sentido de los ejercicios y desarrollar su lógica.
+OBJETIVO:
+- Escribir un capítulo académicamente sólido y editorialmente rico.
+- Respetar la estructura aprobada.
+- Priorizar prosa narrativa profunda.
+- Usar bloques editoriales cuando aporten valor pedagógico real.
+- Mantener alcance estricto del corpus.
 
 Respondé EXACTAMENTE con este esquema JSON:
 {
   "title": "string",
-  "intro": "string",
+  "intro_paragraphs": ["string", "string"],
   "sections": [
     {
       "title": "string",
-      "paragraphs": ["string", "string", "string"]
+      "opening_paragraphs": ["string", "string"],
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "string"
+        },
+        {
+          "type": "definicion",
+          "title": "string",
+          "text": "string"
+        },
+        {
+          "type": "nota",
+          "title": "string",
+          "text": "string"
+        },
+        {
+          "type": "importante",
+          "title": "string",
+          "text": "string"
+        },
+        {
+          "type": "formula",
+          "title": "string",
+          "intro": "string",
+          "latex": "string",
+          "outro": "string"
+        },
+        {
+          "type": "ejemplo",
+          "title": "string",
+          "text": "string"
+        },
+        {
+          "type": "derivacion",
+          "title": "string",
+          "intro": "string",
+          "steps": ["string", "string"],
+          "outro": "string"
+        }
+      ],
+      "closing_paragraphs": ["string", "string"]
     }
   ],
-  "closing": "string",
+  "chapter_closing_paragraphs": ["string"],
   "glossary_terms": [
     {
       "term": "string",
@@ -201,7 +228,27 @@ Respondé EXACTAMENTE con este esquema JSON:
   ]
 }`;
 
-  return await callClaudeJson(system, prompt, 3600);
+  const result = await callClaudeJson(system, prompt, 5200);
+
+  const chapterJson = result.json;
+
+  return {
+    json: {
+      title: sanitizeSectionTitle(chapterJson.title || chapter.title || `Capítulo ${chapterIndex + 1}`),
+      intro_paragraphs: Array.isArray(chapterJson.intro_paragraphs) ? chapterJson.intro_paragraphs : [],
+      sections: Array.isArray(chapterJson.sections) ? chapterJson.sections.map((s) => ({
+        title: sanitizeSectionTitle(s.title || ''),
+        opening_paragraphs: Array.isArray(s.opening_paragraphs) ? s.opening_paragraphs : [],
+        blocks: Array.isArray(s.blocks) ? s.blocks : [],
+        closing_paragraphs: Array.isArray(s.closing_paragraphs) ? s.closing_paragraphs : []
+      })) : [],
+      chapter_closing_paragraphs: Array.isArray(chapterJson.chapter_closing_paragraphs)
+        ? chapterJson.chapter_closing_paragraphs
+        : [],
+      glossary_terms: Array.isArray(chapterJson.glossary_terms) ? chapterJson.glossary_terms : []
+    },
+    usage: result.usage
+  };
 }
 
 function dedupeGlossary(allTerms) {
@@ -232,13 +279,7 @@ async function generateManualContent(corpus, structure) {
 
   for (let i = 0; i < chapters.length; i++) {
     const result = await generateChapterContent(corpus, chapters[i], i);
-
-    generatedChapters.push({
-      title: result.json.title,
-      intro: result.json.intro,
-      sections: result.json.sections || [],
-      closing: result.json.closing || ''
-    });
+    generatedChapters.push(result.json);
 
     if (Array.isArray(result.json.glossary_terms)) {
       glossaryTerms.push(...result.json.glossary_terms);
