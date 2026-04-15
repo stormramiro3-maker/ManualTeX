@@ -11,6 +11,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
 
   const [corpus, setCorpus] = useState([]);
+  const [processingLog, setProcessingLog] = useState([]);
 
   const zipRef = useRef(null);
 
@@ -22,6 +23,7 @@ export default function App() {
     setError("");
     setFiles([]);
     setCorpus([]);
+    setProcessingLog([]);
     setZipName(file.name);
 
     try {
@@ -43,7 +45,7 @@ export default function App() {
 
       setFiles(entries);
     } catch (err) {
-      setError("No se pudo leer el ZIP.");
+      setError(`No se pudo leer el ZIP: ${err.message}`);
       console.error(err);
     } finally {
       setLoading(false);
@@ -56,39 +58,52 @@ export default function App() {
     setLoading(true);
     setError("");
     setCorpus([]);
+    setProcessingLog([]);
 
     try {
-      const pdfFiles = files.filter(f => f.isPdf);
+      const pdfFiles = files.filter((f) => f.isPdf);
       const results = [];
+      const logs = [];
 
       for (const file of pdfFiles) {
-        const data = await extractPdfText(zipRef.current, file.path);
+        logs.push(`Procesando: ${file.name}`);
+        setProcessingLog([...logs]);
 
-        results.push({
-          name: file.name,
-          pages: data.pages,
-          chars: data.chars
-        });
+        try {
+          const data = await extractPdfText(zipRef.current, file.path);
+
+          results.push({
+            name: file.name,
+            pages: data.pages,
+            chars: data.chars
+          });
+
+          logs.push(`OK: ${file.name} — ${data.pages} págs — ${data.chars} chars`);
+          setProcessingLog([...logs]);
+        } catch (err) {
+          logs.push(`ERROR: ${file.name} — ${err.message}`);
+          setProcessingLog([...logs]);
+          throw err;
+        }
       }
 
       setCorpus(results);
     } catch (err) {
       console.error(err);
-      setError("Error procesando PDFs");
+      setError(`Error procesando PDFs: ${err.message}`);
     } finally {
       setLoading(false);
     }
   }
 
-  const pdfFiles = files.filter(f => f.isPdf);
-  const otherFiles = files.filter(f => !f.isPdf);
+  const pdfFiles = files.filter((f) => f.isPdf);
+  const otherFiles = files.filter((f) => !f.isPdf);
 
   return (
     <div style={{ padding: 24, fontFamily: "Arial", maxWidth: 1000, margin: "0 auto" }}>
       <h1>ManualTeX v1</h1>
       <p>Backend: <strong>{backendStatus}</strong></p>
 
-      {/* CARGA ZIP */}
       <div style={card}>
         <h2>Cargar ZIP</h2>
         <input type="file" accept=".zip" onChange={handleZipChange} />
@@ -98,7 +113,6 @@ export default function App() {
         {error && <p style={{ color: "crimson" }}>{error}</p>}
       </div>
 
-      {/* RESUMEN */}
       {files.length > 0 && !loading && (
         <div style={card}>
           <h3>Resumen</h3>
@@ -108,7 +122,6 @@ export default function App() {
         </div>
       )}
 
-      {/* BOTÓN PROCESAR */}
       {pdfFiles.length > 0 && (
         <div style={card}>
           <button onClick={processPdfs} style={button}>
@@ -117,7 +130,17 @@ export default function App() {
         </div>
       )}
 
-      {/* PDF LISTA */}
+      {processingLog.length > 0 && (
+        <div style={card}>
+          <h3>Log de procesamiento</h3>
+          {processingLog.map((line, i) => (
+            <div key={i} style={{ marginBottom: 6 }}>
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
+
       {pdfFiles.length > 0 && (
         <div style={card}>
           <h3>PDF detectados</h3>
@@ -142,7 +165,6 @@ export default function App() {
         </div>
       )}
 
-      {/* OTROS */}
       {otherFiles.length > 0 && (
         <div style={card}>
           <h3>Otros archivos</h3>
@@ -167,7 +189,6 @@ export default function App() {
         </div>
       )}
 
-      {/* CORPUS */}
       {corpus.length > 0 && (
         <div style={card}>
           <h3>Corpus procesado</h3>
