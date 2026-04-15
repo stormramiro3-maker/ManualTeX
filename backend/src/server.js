@@ -3,11 +3,13 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { generateStructure, reviseStructure } = require('./structureService');
+const { generateManualContent } = require('./generationService');
+const { renderManualToTex } = require('./latexRenderer');
 
 const app = express();
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -46,6 +48,28 @@ app.post('/api/structure/revise', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('ERROR /api/structure/revise:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/generate-tex', async (req, res) => {
+  try {
+    const { corpus, approvedStructure } = req.body;
+
+    if (!corpus || !approvedStructure) {
+      return res.status(400).json({ error: 'Faltan corpus o estructura aprobada' });
+    }
+
+    const contentResult = await generateManualContent(corpus, approvedStructure);
+    const tex = renderManualToTex(corpus, approvedStructure, contentResult);
+
+    res.json({
+      success: true,
+      tex,
+      usage: contentResult.usage
+    });
+  } catch (err) {
+    console.error('ERROR /api/generate-tex:', err);
     res.status(500).json({ error: err.message });
   }
 });
