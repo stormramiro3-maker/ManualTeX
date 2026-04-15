@@ -2,6 +2,9 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+
 const { generateStructure, reviseStructure } = require('./structureService');
 const { generateManualContent } = require('./generationService');
 const { renderManualToTex } = require('./latexRenderer');
@@ -9,7 +12,7 @@ const { renderManualToTex } = require('./latexRenderer');
 const app = express();
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -60,13 +63,28 @@ app.post('/api/generate-tex', async (req, res) => {
       return res.status(400).json({ error: 'Faltan corpus o estructura aprobada' });
     }
 
+    const templatePath = path.join(__dirname, 'template_v1.tex');
+
+    if (!fs.existsSync(templatePath)) {
+      return res.status(500).json({ error: 'No se encontró template_v1.tex en backend/src/' });
+    }
+
+    const template = fs.readFileSync(templatePath, 'utf8');
+
     const contentResult = await generateManualContent(corpus, approvedStructure);
-    const tex = renderManualToTex(corpus, approvedStructure, contentResult);
+
+    const tex = renderManualToTex(
+      corpus,
+      approvedStructure,
+      contentResult,
+      template
+    );
 
     res.json({
       success: true,
       tex,
-      usage: contentResult.usage
+      usage: contentResult.usage,
+      chapter_count: contentResult.chapters?.length || 0
     });
   } catch (err) {
     console.error('ERROR /api/generate-tex:', err);
