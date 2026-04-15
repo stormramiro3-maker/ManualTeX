@@ -28,7 +28,7 @@ function extractJson(text) {
   return null;
 }
 
-async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS) {
+async function callClaudeText(system, prompt, maxTokens = MAX_TOKENS) {
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: maxTokens,
@@ -43,7 +43,41 @@ async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS) {
     .join('\n')
     .trim();
 
-  const json = extractJson(text);
+  return {
+    text,
+    usage: {
+      input_tokens: response.usage?.input_tokens || 0,
+      output_tokens: response.usage?.output_tokens || 0
+    }
+  };
+}
+
+async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS) {
+  const first = await callClaudeText(system, prompt, maxTokens);
+  let json = extractJson(first.text);
+
+  if (json) {
+    return {
+      json,
+      usage: first.usage
+    };
+  }
+
+  const repairSystem = `Sos un reparador de JSON.
+Tu única tarea es convertir una salida inválida a JSON válido.
+Reglas:
+- Respondé SOLO JSON válido
+- No uses markdown
+- No uses backticks
+- No agregues explicación
+- Conservá el contenido conceptual original`;
+
+  const repairPrompt = `Convertí esta salida en JSON válido, sin cambiar su sentido:
+
+${first.text}`;
+
+  const repaired = await callClaudeText(repairSystem, repairPrompt, 2500);
+  json = extractJson(repaired.text);
 
   if (!json) {
     throw new Error('Claude devolvió JSON inválido en generación de capítulo');
@@ -52,8 +86,8 @@ async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS) {
   return {
     json,
     usage: {
-      input_tokens: response.usage?.input_tokens || 0,
-      output_tokens: response.usage?.output_tokens || 0
+      input_tokens: (first.usage.input_tokens || 0) + (repaired.usage.input_tokens || 0),
+      output_tokens: (first.usage.output_tokens || 0) + (repaired.usage.output_tokens || 0)
     }
   };
 }
@@ -61,6 +95,11 @@ async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS) {
 function getDocsForChapter(corpus, chapter) {
   const names = new Set(chapter.source_documents || []);
   return corpus.documents.filter((doc) => names.has(doc.name));
+}
+
+function trimDocText(text = '', maxChars = 12000) {
+  if (!text) return '';
+  return text.length <= maxChars ? text : text.slice(0, maxChars);
 }
 
 async function generateChapterContent(corpus, chapter, chapterIndex) {
@@ -71,18 +110,21 @@ async function generateChapterContent(corpus, chapter, chapterIndex) {
     pages: doc.pages,
     chars: doc.chars,
     preliminary_category: doc.preliminary_category,
-    text: doc.text
+    text: trimDocText(doc.text, 12000)
   }));
 
-  const system = `Sos un redactor académico experto. 
+  const system = `Sos un redactor académico experto.
 Tu tarea es desarrollar UN capítulo de un manual universitario.
+
 Reglas:
 - Respondé SOLO JSON válido.
 - No uses markdown.
 - No uses backticks.
 - No inventes contenido fuera de las fuentes.
 - Redactá claro, formal y explicativo.
-- No resuelvas ejercicios paso a paso salvo que el capítulo sea práctico y haga falta una breve aplicación.`;
+- Cada sección debe tener entre 2 y 3 párrafos.
+- No hagas arrays gigantes.
+- Mantené el capítulo en un tamaño razonable.`;
 
   const prompt = `Desarrollá el capítulo ${chapterIndex + 1} del manual.
 
@@ -97,15 +139,15 @@ ${JSON.stringify(reducedDocs, null, 2)}
 
 Respondé EXACTAMENTE con este esquema:
 {
-  "title": string,
-  "intro": string,
+  "title": "string",
+  "intro": "string",
   "sections": [
     {
-      "title": string,
-      "paragraphs": [string, string, string]
+      "title": "string",
+      "paragraphs": ["string", "string"]
     }
   ],
-  "closing": string
+  "closing": "string"
 }`;
 
   return await callClaudeJson(system, prompt, 3200);
