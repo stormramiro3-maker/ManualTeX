@@ -105,6 +105,10 @@ export default function useTaskProgress() {
     clear();
     setError(message || "Ocurrió un error");
     setStage("Error");
+
+    setTimeout(() => {
+      setVisible(false);
+    }, 1800);
   };
 
   const finish = (customStage = "Completado") => {
@@ -126,6 +130,11 @@ export default function useTaskProgress() {
     setStage("");
   };
 
+  const close = () => {
+    clear();
+    setVisible(false);
+  };
+
   return {
     progressProps: {
       visible,
@@ -139,6 +148,7 @@ export default function useTaskProgress() {
     advanceTo,
     fail,
     finish,
-    reset
+    reset,
+    close
   };
 }
