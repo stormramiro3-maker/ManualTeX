@@ -6,7 +6,8 @@ export default function TaskProgressOverlay({
   percent = 0,
   stage = "",
   detail = "La IA está trabajando...",
-  error = ""
+  error = "",
+  onClose
 }) {
   if (!visible) return null;
 
@@ -31,6 +32,14 @@ export default function TaskProgressOverlay({
         </div>
 
         {error ? <div style={styles.error}>{error}</div> : null}
+
+        {error ? (
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+            <button style={styles.closeButton} onClick={onClose}>
+              Cerrar
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -96,6 +105,21 @@ const styles = {
     marginTop: 12,
     color: "#b91c1c",
     fontSize: 13,
-    whiteSpace: "pre-wrap"
+    whiteSpace: "pre-wrap",
+    maxHeight: 180,
+    overflowY: "auto",
+    lineHeight: 1.4,
+    border: "1px solid #fecaca",
+    background: "#fff5f5",
+    padding: 10,
+    borderRadius: 8
+  },
+  closeButton: {
+    padding: "8px 14px",
+    borderRadius: 8,
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    cursor: "pointer",
+    fontWeight: 600
   }
 };
