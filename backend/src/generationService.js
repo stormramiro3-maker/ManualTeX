@@ -2,13 +2,15 @@ const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const path = require('path');
 
+// x3 respecto del default anterior de 300000 ms
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
-  timeout: parseInt(process.env.CLAUDE_TIMEOUT_MS || '300000', 10)
+  timeout: parseInt(process.env.CLAUDE_TIMEOUT_MS || '900000', 10)
 });
 
+// x10 respecto del default anterior de 4000 tokens
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
-const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '6000', 10);
+const MAX_TOKENS = parseInt(process.env.CLAUDE_MAX_TOKENS || '40000', 10);
 
 const skillPath = path.join(__dirname, 'SKILL.md');
 const SKILL_TEXT = fs.existsSync(skillPath)
@@ -90,58 +92,50 @@ function tryParseJson(text) {
   }
 }
 
-function validateChapterJsonShape(obj) {
+function validateObjectShape(obj, shapeName) {
   const errors = [];
 
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     return {
       ok: false,
-      errors: ['La raíz no es un objeto JSON']
+      errors: [`La raíz de ${shapeName} no es un objeto JSON`]
     };
   }
 
-  if (typeof obj.title !== 'string') errors.push('Falta o no es string: title');
-  if (typeof obj.intro !== 'string') errors.push('Falta o no es string: intro');
-  if (typeof obj.closing !== 'string') errors.push('Falta o no es string: closing');
+  if (shapeName === 'chapter_meta') {
+    if (typeof obj.intro !== 'string') errors.push('Falta o no es string: intro');
+    if (typeof obj.closing !== 'string') errors.push('Falta o no es string: closing');
 
-  if (!Array.isArray(obj.sections)) {
-    errors.push('Falta o no es array: sections');
-  } else {
-    obj.sections.forEach((section, i) => {
-      if (!section || typeof section !== 'object' || Array.isArray(section)) {
-        errors.push(`sections[${i}] no es objeto`);
-        return;
-      }
-      if (typeof section.title !== 'string') {
-        errors.push(`sections[${i}].title falta o no es string`);
-      }
-      if (!Array.isArray(section.paragraphs)) {
-        errors.push(`sections[${i}].paragraphs falta o no es array`);
-      } else {
-        section.paragraphs.forEach((p, j) => {
-          if (typeof p !== 'string') {
-            errors.push(`sections[${i}].paragraphs[${j}] no es string`);
-          }
-        });
-      }
-    });
+    if (!Array.isArray(obj.glossary_terms)) {
+      errors.push('Falta o no es array: glossary_terms');
+    } else {
+      obj.glossary_terms.forEach((item, i) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          errors.push(`glossary_terms[${i}] no es objeto`);
+          return;
+        }
+        if (typeof item.term !== 'string') {
+          errors.push(`glossary_terms[${i}].term falta o no es string`);
+        }
+        if (typeof item.definition !== 'string') {
+          errors.push(`glossary_terms[${i}].definition falta o no es string`);
+        }
+      });
+    }
   }
 
-  if (!Array.isArray(obj.glossary_terms)) {
-    errors.push('Falta o no es array: glossary_terms');
-  } else {
-    obj.glossary_terms.forEach((item, i) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) {
-        errors.push(`glossary_terms[${i}] no es objeto`);
-        return;
-      }
-      if (typeof item.term !== 'string') {
-        errors.push(`glossary_terms[${i}].term falta o no es string`);
-      }
-      if (typeof item.definition !== 'string') {
-        errors.push(`glossary_terms[${i}].definition falta o no es string`);
-      }
-    });
+  if (shapeName === 'section_content') {
+    if (typeof obj.title !== 'string') errors.push('Falta o no es string: title');
+
+    if (!Array.isArray(obj.paragraphs)) {
+      errors.push('Falta o no es array: paragraphs');
+    } else {
+      obj.paragraphs.forEach((p, i) => {
+        if (typeof p !== 'string') {
+          errors.push(`paragraphs[${i}] no es string`);
+        }
+      });
+    }
   }
 
   return {
@@ -176,13 +170,13 @@ async function callClaudeText(system, prompt, maxTokens = MAX_TOKENS) {
   };
 }
 
-async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS, context = {}) {
+async function callClaudeJson(system, prompt, schemaName, maxTokens = MAX_TOKENS, context = {}) {
   const first = await callClaudeText(system, prompt, maxTokens);
   const firstAnalysis = analyzeJsonText(first.text);
   const firstParse = tryParseJson(first.text);
 
   if (firstParse.ok) {
-    const shape = validateChapterJsonShape(firstParse.value);
+    const shape = validateObjectShape(firstParse.value, schemaName);
     if (shape.ok) {
       return {
         json: firstParse.value,
@@ -196,20 +190,10 @@ async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS, context = 
     }
   }
 
-  const repairSystem = `
-Sos un parser estricto de JSON.
-
-Convertí el contenido recibido a JSON válido respetando EXACTAMENTE este esquema:
-
-{
-  "title": "string",
+  const repairSchemaDescription =
+    schemaName === 'chapter_meta'
+      ? `{
   "intro": "string",
-  "sections": [
-    {
-      "title": "string",
-      "paragraphs": ["string"]
-    }
-  ],
   "closing": "string",
   "glossary_terms": [
     {
@@ -217,7 +201,18 @@ Convertí el contenido recibido a JSON válido respetando EXACTAMENTE este esque
       "definition": "string"
     }
   ]
-}
+}`
+      : `{
+  "title": "string",
+  "paragraphs": ["string"]
+}`;
+
+  const repairSystem = `
+Sos un parser estricto de JSON.
+
+Convertí el contenido recibido a JSON válido respetando EXACTAMENTE este esquema:
+
+${repairSchemaDescription}
 
 Reglas:
 - NO inventar contenido
@@ -226,24 +221,14 @@ Reglas:
 - RESPONDER SOLO JSON
 - NO usar markdown
 - NO usar backticks
-`;
-
-  const repairPrompt = `
-Convertí este contenido a JSON válido.
-
-Si hay texto fuera del JSON, descartalo.
-Si el JSON está incompleto, completá SOLO con strings vacíos o arrays vacíos.
-
-CONTENIDO:
-${first.text}
 `.trim();
 
-  const repaired = await callClaudeText(repairSystem, repairPrompt, 3000);
+  const repaired = await callClaudeText(repairSystem, first.text, 4000);
   const repairedAnalysis = analyzeJsonText(repaired.text);
   const repairedParse = tryParseJson(repaired.text);
 
   if (repairedParse.ok) {
-    const shape = validateChapterJsonShape(repairedParse.value);
+    const shape = validateObjectShape(repairedParse.value, schemaName);
     if (shape.ok) {
       return {
         json: repairedParse.value,
@@ -268,26 +253,38 @@ ${first.text}
       'Claude devolvió JSON parseable pero con esquema inválido en generación del manual',
       {
         ...context,
+        schema_name: schemaName,
         stage: 'schema_validation_after_repair',
         first_pass: {
           analysis: firstAnalysis,
-          parse_error: firstParse.ok ? null : firstParse.error
+          parse_error: firstParse.ok ? null : firstParse.error,
+          stop_reason: first.stop_reason
         },
         repair_pass: {
           analysis: repairedAnalysis,
           parse_method: repairedParse.method,
           schema_errors: shape.errors,
-          raw_snippet: safeSnippet(repaired.text, 2000)
+          raw_snippet: safeSnippet(repaired.text, 2000),
+          stop_reason: repaired.stop_reason
         }
       }
     );
   }
 
+  const tokenTruncationLikely =
+    first.stop_reason === 'max_tokens' ||
+    repaired.stop_reason === 'max_tokens';
+
   throw new ManualGenerationError(
-    'Claude devolvió JSON inválido en generación del manual',
+    tokenTruncationLikely
+      ? 'Claude truncó la salida por límite de tokens durante la generación del manual'
+      : 'Claude devolvió JSON inválido en generación del manual',
     {
       ...context,
-      stage: 'json_parse_failed_after_repair',
+      schema_name: schemaName,
+      stage: tokenTruncationLikely
+        ? 'json_truncated_by_max_tokens'
+        : 'json_parse_failed_after_repair',
       first_pass: {
         analysis: firstAnalysis,
         parse_error: firstParse.ok ? null : firstParse.error,
@@ -304,14 +301,21 @@ ${first.text}
   );
 }
 
-function trimDocText(text = '', maxChars = 6000) {
+function trimDocText(text = '', maxChars = 5000) {
   if (!text) return '';
   return text.length <= maxChars ? text : text.slice(0, maxChars);
 }
 
+function cleanTitle(text = '', fallback = 'Sin título') {
+  const stripped = String(text)
+    .replace(/^\d+(\.\d+)*\s*/g, '')
+    .trim();
+  return stripped || fallback;
+}
+
 function getDocsForChapter(corpus, chapter) {
   const names = new Set(chapter.source_documents || []);
-  return corpus.documents.filter((doc) => names.has(doc.name));
+  return (corpus.documents || []).filter((doc) => names.has(doc.name));
 }
 
 function buildSystemPrompt() {
@@ -323,78 +327,77 @@ Reglas críticas:
 - No inventar contenido fuera del corpus
 - No generar LaTeX
 - Priorizá JSON válido y esquema correcto
+- No usar fences de markdown
+- No abrir con \`\`\`json
 
 Protocolo editorial base:
-${SKILL_TEXT.slice(0, 6000)}`;
+${SKILL_TEXT.slice(0, 5000)}`;
 }
 
-function cleanTitle(text = '', fallback = 'Sin título') {
-  const stripped = String(text)
-    .replace(/^\d+(\.\d+)*\s*/g, '')
-    .trim();
-  return stripped || fallback;
-}
-
-function normalizeChapterJson(json, fallbackTitle) {
-  return {
-    title: cleanTitle(json.title, fallbackTitle),
-    intro: String(json.intro || '').trim(),
-    sections: Array.isArray(json.sections)
-      ? json.sections.map((s, i) => ({
-          title: cleanTitle(s.title, `Sección ${i + 1}`),
-          paragraphs: Array.isArray(s.paragraphs)
-            ? s.paragraphs.map((p) => String(p).trim()).filter(Boolean)
-            : []
-        }))
-      : [],
-    closing: String(json.closing || '').trim(),
-    glossary_terms: Array.isArray(json.glossary_terms)
-      ? json.glossary_terms
-          .filter((x) => x && x.term && x.definition)
-          .map((x) => ({
-            term: String(x.term).trim(),
-            definition: String(x.definition).trim()
-          }))
-      : []
-  };
-}
-
-async function generateChapterContent(corpus, chapter, chapterIndex) {
-  const sourceDocs = getDocsForChapter(corpus, chapter);
-
-  const reducedDocs = sourceDocs.map((doc) => ({
+function buildReducedDocsForChapter(sourceDocs) {
+  return sourceDocs.map((doc) => ({
     name: doc.name,
     preliminary_category: doc.preliminary_category,
     pages: doc.pages,
     chars: doc.chars,
-    text: trimDocText(doc.text, 6000)
+    text: trimDocText(doc.text, 5000)
   }));
+}
 
+function normalizeGlossaryTerms(items) {
+  return Array.isArray(items)
+    ? items
+        .filter((x) => x && x.term && x.definition)
+        .map((x) => ({
+          term: String(x.term).trim(),
+          definition: String(x.definition).trim()
+        }))
+    : [];
+}
+
+function normalizeSectionJson(sectionJson, fallbackTitle) {
+  return {
+    title: cleanTitle(sectionJson.title, fallbackTitle),
+    paragraphs: Array.isArray(sectionJson.paragraphs)
+      ? sectionJson.paragraphs
+          .map((p) => String(p || '').trim())
+          .filter(Boolean)
+      : []
+  };
+}
+
+async function generateChapterMeta(corpus, chapter, chapterIndex, reducedDocs) {
   const system = buildSystemPrompt();
 
   const prompt = `
-Desarrollá el capítulo ${chapterIndex + 1} de un manual universitario.
+Desarrollá SOLO el marco general del capítulo ${chapterIndex + 1} de un manual universitario.
 
 METADATA:
 ${JSON.stringify(corpus.metadata || {})}
 
-ESTRUCTURA DEL CAPÍTULO:
-${JSON.stringify(chapter || {})}
+CAPÍTULO:
+${JSON.stringify({
+  title: chapter.title,
+  purpose: chapter.purpose || '',
+  sections: (chapter.sections || []).map((s) => ({
+    title: s.title,
+    descriptor: s.descriptor || ''
+  }))
+})}
 
 FUENTES DISPONIBLES:
 ${JSON.stringify(reducedDocs)}
 
-Respondé SOLO con JSON válido bajo este esquema exacto:
+Objetivo:
+- Redactar una introducción rica y académica del capítulo
+- Redactar un cierre sólido del capítulo
+- Proponer términos de glosario útiles y pertinentes al capítulo
+- No redactar todavía el contenido de las secciones
+
+Respondé SOLO con JSON válido con este esquema exacto:
 
 {
-  "title": "string",
   "intro": "string",
-  "sections": [
-    {
-      "title": "string",
-      "paragraphs": ["string", "string"]
-    }
-  ],
   "closing": "string",
   "glossary_terms": [
     {
@@ -405,15 +408,16 @@ Respondé SOLO con JSON válido bajo este esquema exacto:
 }
 
 Reglas:
-- Cada párrafo debe ser un string distinto dentro de paragraphs
 - No usar markdown
 - No usar backticks
+- No abrir con \`\`\`json
 - No usar texto fuera del JSON
 - No inventar contenido fuera de las fuentes
 - Si un dato no aplica, usar string vacío o []
 `.trim();
 
-  const result = await callClaudeJson(system, prompt, 5000, {
+  const result = await callClaudeJson(system, prompt, 'chapter_meta', 6000, {
+    chunk_type: 'chapter_meta',
     chapter_index: chapterIndex,
     chapter_title: chapter?.title || `Capítulo ${chapterIndex + 1}`,
     source_documents: (chapter?.source_documents || []).slice(0, 20),
@@ -422,9 +426,86 @@ Reglas:
   });
 
   return {
-    json: normalizeChapterJson(
+    json: {
+      intro: String(result.json.intro || '').trim(),
+      closing: String(result.json.closing || '').trim(),
+      glossary_terms: normalizeGlossaryTerms(result.json.glossary_terms)
+    },
+    usage: result.usage,
+    debug: result.debug
+  };
+}
+
+async function generateSectionContent(corpus, chapter, section, chapterIndex, sectionIndex, reducedDocs) {
+  const system = buildSystemPrompt();
+
+  const prompt = `
+Desarrollá SOLO una sección de un manual universitario.
+
+METADATA:
+${JSON.stringify(corpus.metadata || {})}
+
+CAPÍTULO:
+${JSON.stringify({
+  title: chapter.title,
+  purpose: chapter.purpose || ''
+})}
+
+SECCIÓN A DESARROLLAR:
+${JSON.stringify({
+  title: section.title,
+  descriptor: section.descriptor || ''
+})}
+
+SECCIONES HERMANAS DEL MISMO CAPÍTULO:
+${JSON.stringify((chapter.sections || []).map((s, i) => ({
+  index: i,
+  title: s.title,
+  descriptor: s.descriptor || ''
+})))}
+
+FUENTES DISPONIBLES:
+${JSON.stringify(reducedDocs)}
+
+Objetivo:
+- Redactar esta sección con prosa académica desarrollada
+- Cada párrafo debe ser un string independiente
+- Mantener profundidad, no hacer resumen pobre
+- No redactar intro general del capítulo ni cierre general del capítulo
+- No duplicar secciones hermanas, concentrarse en esta sección
+
+Respondé SOLO con JSON válido con este esquema exacto:
+
+{
+  "title": "string",
+  "paragraphs": ["string", "string"]
+}
+
+Reglas:
+- No usar markdown
+- No usar backticks
+- No abrir con \`\`\`json
+- No usar texto fuera del JSON
+- No inventar contenido fuera de las fuentes
+- Cada párrafo debe ser autosuficiente y bien redactado
+- La cantidad de párrafos puede ser amplia si la sección lo necesita
+`.trim();
+
+  const result = await callClaudeJson(system, prompt, 'section_content', MAX_TOKENS, {
+    chunk_type: 'section_content',
+    chapter_index: chapterIndex,
+    chapter_title: chapter?.title || `Capítulo ${chapterIndex + 1}`,
+    section_index: sectionIndex,
+    section_title: section?.title || `Sección ${sectionIndex + 1}`,
+    source_documents: (chapter?.source_documents || []).slice(0, 20),
+    source_doc_count: reducedDocs.length,
+    model: MODEL
+  });
+
+  return {
+    json: normalizeSectionJson(
       result.json,
-      chapter.title || `Capítulo ${chapterIndex + 1}`
+      section.title || `Sección ${sectionIndex + 1}`
     ),
     usage: result.usage,
     debug: result.debug
@@ -450,6 +531,91 @@ function dedupeGlossary(allTerms) {
   );
 }
 
+async function generateChapterContent(corpus, chapter, chapterIndex) {
+  const sourceDocs = getDocsForChapter(corpus, chapter);
+  const reducedDocs = buildReducedDocsForChapter(sourceDocs);
+
+  const debugChunks = [];
+  let totalInput = 0;
+  let totalOutput = 0;
+
+  const metaResult = await generateChapterMeta(
+    corpus,
+    chapter,
+    chapterIndex,
+    reducedDocs
+  );
+
+  totalInput += metaResult.usage.input_tokens || 0;
+  totalOutput += metaResult.usage.output_tokens || 0;
+
+  debugChunks.push({
+    chunk_type: 'chapter_meta',
+    ok: true,
+    debug: metaResult.debug
+  });
+
+  const sections = [];
+
+  for (let i = 0; i < (chapter.sections || []).length; i++) {
+    const section = chapter.sections[i];
+
+    try {
+      const sectionResult = await generateSectionContent(
+        corpus,
+        chapter,
+        section,
+        chapterIndex,
+        i,
+        reducedDocs
+      );
+
+      sections.push(sectionResult.json);
+
+      totalInput += sectionResult.usage.input_tokens || 0;
+      totalOutput += sectionResult.usage.output_tokens || 0;
+
+      debugChunks.push({
+        chunk_type: 'section_content',
+        section_index: i,
+        section_title: section?.title || `Sección ${i + 1}`,
+        ok: true,
+        debug: sectionResult.debug
+      });
+    } catch (err) {
+      if (err instanceof ManualGenerationError) {
+        err.details = {
+          ...(err.details || {}),
+          chapter_index: chapterIndex,
+          chapter_title: chapter?.title || `Capítulo ${chapterIndex + 1}`,
+          section_index: i,
+          section_title: section?.title || `Sección ${i + 1}`,
+          completed_sections: sections.length,
+          debug_chunks: debugChunks
+        };
+      }
+      throw err;
+    }
+  }
+
+  return {
+    json: {
+      title: cleanTitle(chapter.title, `Capítulo ${chapterIndex + 1}`),
+      intro: metaResult.json.intro,
+      sections,
+      closing: metaResult.json.closing,
+      glossary_terms: metaResult.json.glossary_terms
+    },
+    usage: {
+      input_tokens: totalInput,
+      output_tokens: totalOutput
+    },
+    debug: {
+      chunks: debugChunks
+    }
+  };
+}
+
 async function generateManualContent(corpus, structure) {
   const chapters = structure.chapters || [];
   const generatedChapters = [];
@@ -467,8 +633,8 @@ async function generateManualContent(corpus, structure) {
         glossaryTerms.push(...result.json.glossary_terms);
       }
 
-      totalInput += result.usage.input_tokens;
-      totalOutput += result.usage.output_tokens;
+      totalInput += result.usage.input_tokens || 0;
+      totalOutput += result.usage.output_tokens || 0;
 
       debugChapters.push({
         chapter_index: i,
