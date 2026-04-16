@@ -43,7 +43,7 @@ export default function App() {
   const [compileLog, setCompileLog] = useState("");
 
   const zipRef = useRef(null);
-  const { progressProps, start, advanceTo, fail, finish, reset } = useTaskProgress();
+  const { progressProps, start, advanceTo, fail, finish, reset, close } = useTaskProgress();
 
   useEffect(() => {
     checkHealth();
@@ -98,7 +98,6 @@ export default function App() {
     setTexUsage(null);
     setPdfBase64("");
     setCompileLog("");
-    setZipName(file.name);
 
     try {
       const zip = await JSZip.loadAsync(file);
@@ -126,6 +125,7 @@ export default function App() {
         });
       }
 
+      setZipName(file.name);
       setFiles(entries);
     } catch (err) {
       setError(`No se pudo leer el ZIP: ${err.message}`);
@@ -288,7 +288,7 @@ export default function App() {
       console.error(err);
       setError(err.message);
       setErrorDetails(err.details || null);
-      fail(err.message);
+      fail(buildReadableError(err));
     } finally {
       setStructureLoading(false);
     }
@@ -349,7 +349,7 @@ export default function App() {
       console.error(err);
       setError(err.message);
       setErrorDetails(err.details || null);
-      fail(err.message);
+      fail(buildReadableError(err));
     } finally {
       setStructureLoading(false);
     }
@@ -414,7 +414,7 @@ export default function App() {
       console.error(err);
       setError(err.message);
       setErrorDetails(err.details || null);
-      fail(err.message);
+      fail(buildReadableError(err));
     } finally {
       setTexLoading(false);
     }
@@ -462,7 +462,7 @@ export default function App() {
       console.error(err);
       setError(err.message);
       setErrorDetails(err.details || null);
-      fail(err.message);
+      fail(buildReadableError(err));
     } finally {
       setPdfLoading(false);
     }
@@ -512,7 +512,7 @@ export default function App() {
 
   return (
     <div style={container}>
-      <TaskProgressOverlay {...progressProps} />
+      <TaskProgressOverlay {...progressProps} onClose={close} />
 
       <h1>ManualTeX v1</h1>
       <p>Backend: <strong>{backendStatus}</strong></p>
@@ -812,6 +812,68 @@ function buildFrontendError(data, fallbackMessage) {
   }
 
   return err;
+}
+
+function buildReadableError(err) {
+  const base = err?.message || "Ocurrió un error";
+  const d = err?.details;
+
+  if (!d) return base;
+
+  const parts = [base];
+
+  if (typeof d.chapter_index === "number") {
+    parts.push(`Capítulo: ${d.chapter_index + 1}`);
+  }
+
+  if (d.chapter_title) {
+    parts.push(`Título: ${d.chapter_title}`);
+  }
+
+  if (typeof d.section_index === "number") {
+    parts.push(`Sección: ${d.section_index + 1}`);
+  }
+
+  if (d.section_title) {
+    parts.push(`Título de sección: ${d.section_title}`);
+  }
+
+  if (d.stage) {
+    parts.push(`Etapa: ${d.stage}`);
+  }
+
+  const firstStop = d.first_pass?.stop_reason || d.stop_reason_first;
+  const repairStop = d.repair_pass?.stop_reason || d.stop_reason_repair;
+
+  if (firstStop) {
+    parts.push(`Stop reason inicial: ${firstStop}`);
+  }
+
+  if (repairStop) {
+    parts.push(`Stop reason repair: ${repairStop}`);
+  }
+
+  const firstParseError =
+    d.first_pass?.parse_error?.brace_slice_error ||
+    d.first_pass?.parse_error?.full_text_error;
+
+  if (firstParseError) {
+    parts.push(`Parse inicial: ${firstParseError}`);
+  }
+
+  const repairParseError =
+    d.repair_pass?.parse_error?.brace_slice_error ||
+    d.repair_pass?.parse_error?.full_text_error;
+
+  if (repairParseError) {
+    parts.push(`Parse repair: ${repairParseError}`);
+  }
+
+  if (d.compile_log_snippet) {
+    parts.push("Hay log de compilación disponible en detalles.");
+  }
+
+  return parts.join("\n");
 }
 
 function getExtension(filename) {
