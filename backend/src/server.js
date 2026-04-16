@@ -13,7 +13,30 @@ const { renderManualToTex } = require('./latexRenderer');
 
 const app = express();
 
-app.use(cors({ origin: true }));
+const allowedOrigins = [
+  'https://manualtex.netlify.app',
+  'http://localhost:5173',
+  'http://localhost:3000'
+];
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origen no permitido por CORS: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 app.use(express.json({ limit: '30mb' }));
 
 app.get('/api/health', (req, res) => {
@@ -56,16 +79,20 @@ app.post('/api/structure/revise', async (req, res) => {
 });
 
 app.post('/api/generate-tex', async (req, res) => {
+  console.log('➡️ /api/generate-tex START');
+
   try {
     const { corpus, approvedStructure } = req.body;
 
     if (!corpus || !approvedStructure) {
+      console.log('❌ /api/generate-tex BAD REQUEST');
       return res.status(400).json({ error: 'Faltan corpus o estructura aprobada' });
     }
 
     const templatePath = path.join(__dirname, 'template_v1.tex');
 
     if (!fs.existsSync(templatePath)) {
+      console.log('❌ /api/generate-tex TEMPLATE MISSING');
       return res.status(500).json({
         error: 'No se encontró template_v1.tex en backend/src/'
       });
@@ -73,14 +100,18 @@ app.post('/api/generate-tex', async (req, res) => {
 
     const template = fs.readFileSync(templatePath, 'utf8');
 
+    console.log('🧠 /api/generate-tex generating manual content...');
     const contentResult = await generateManualContent(corpus, approvedStructure);
 
+    console.log('🧩 /api/generate-tex rendering tex...');
     const tex = renderManualToTex({
       corpus,
       approvedStructure,
       manualContent: contentResult,
       template
     });
+
+    console.log('✅ /api/generate-tex SUCCESS');
 
     res.json({
       success: true,
@@ -91,6 +122,7 @@ app.post('/api/generate-tex', async (req, res) => {
       debug: contentResult.debug || null
     });
   } catch (err) {
+    console.error('❌ /api/generate-tex CRASH:', err);
     sendErrorResponse(res, err, 'ERROR /api/generate-tex');
   }
 });
