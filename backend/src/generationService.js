@@ -265,7 +265,7 @@ ${first.text}
     }
 
     throw new ManualGenerationError(
-      `Claude devolvió JSON parseable pero con esquema inválido en generación del manual`,
+      'Claude devolvió JSON parseable pero con esquema inválido en generación del manual',
       {
         ...context,
         stage: 'schema_validation_after_repair',
@@ -284,7 +284,7 @@ ${first.text}
   }
 
   throw new ManualGenerationError(
-    `Claude devolvió JSON inválido en generación del manual`,
+    'Claude devolvió JSON inválido en generación del manual',
     {
       ...context,
       stage: 'json_parse_failed_after_repair',
@@ -481,7 +481,7 @@ async function generateManualContent(corpus, structure) {
         err.details = {
           ...(err.details || {}),
           completed_chapters: generatedChapters.length,
-          debug_chapters
+          debug_chapters: debugChapters
         };
       }
       throw err;
