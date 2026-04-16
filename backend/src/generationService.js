@@ -15,32 +15,141 @@ const SKILL_TEXT = fs.existsSync(skillPath)
   ? fs.readFileSync(skillPath, 'utf8')
   : '';
 
-/* =========================
-   JSON EXTRACTION ROBUSTA
-========================= */
-function extractJson(text) {
-  if (!text) return null;
-
-  try {
-    return JSON.parse(text);
-  } catch (_) {}
-
-  const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
-
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    const candidate = text.slice(firstBrace, lastBrace + 1);
-    try {
-      return JSON.parse(candidate);
-    } catch (_) {}
+class ManualGenerationError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'ManualGenerationError';
+    this.details = details;
   }
-
-  return null;
 }
 
-/* =========================
-   CLAUDE TEXT CALL
-========================= */
+function safeSnippet(text, max = 1200) {
+  const raw = String(text || '').replace(/\u0000/g, '');
+  return raw.length <= max ? raw : `${raw.slice(0, max)}…[truncated]`;
+}
+
+function analyzeJsonText(text) {
+  const raw = String(text || '');
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  const hasBraces = firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace;
+
+  return {
+    length: raw.length,
+    hasBraces,
+    firstBrace,
+    lastBrace,
+    startsWithFence: raw.trimStart().startsWith('```'),
+    startsWithBracket: raw.trimStart().startsWith('['),
+    snippet: safeSnippet(raw, 1500)
+  };
+}
+
+function tryParseJson(text) {
+  const raw = String(text || '');
+
+  try {
+    return {
+      ok: true,
+      method: 'full_text',
+      value: JSON.parse(raw)
+    };
+  } catch (err) {
+    const fullTextError = err;
+    const firstBrace = raw.indexOf('{');
+    const lastBrace = raw.lastIndexOf('}');
+
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      const candidate = raw.slice(firstBrace, lastBrace + 1);
+      try {
+        return {
+          ok: true,
+          method: 'brace_slice',
+          value: JSON.parse(candidate)
+        };
+      } catch (sliceErr) {
+        return {
+          ok: false,
+          error: {
+            stage: 'brace_slice',
+            full_text_error: String(fullTextError.message || fullTextError),
+            brace_slice_error: String(sliceErr.message || sliceErr),
+            candidate_snippet: safeSnippet(candidate, 1500)
+          }
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      error: {
+        stage: 'full_text_no_braces',
+        full_text_error: String(fullTextError.message || fullTextError)
+      }
+    };
+  }
+}
+
+function validateChapterJsonShape(obj) {
+  const errors = [];
+
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    return {
+      ok: false,
+      errors: ['La raíz no es un objeto JSON']
+    };
+  }
+
+  if (typeof obj.title !== 'string') errors.push('Falta o no es string: title');
+  if (typeof obj.intro !== 'string') errors.push('Falta o no es string: intro');
+  if (typeof obj.closing !== 'string') errors.push('Falta o no es string: closing');
+
+  if (!Array.isArray(obj.sections)) {
+    errors.push('Falta o no es array: sections');
+  } else {
+    obj.sections.forEach((section, i) => {
+      if (!section || typeof section !== 'object' || Array.isArray(section)) {
+        errors.push(`sections[${i}] no es objeto`);
+        return;
+      }
+      if (typeof section.title !== 'string') {
+        errors.push(`sections[${i}].title falta o no es string`);
+      }
+      if (!Array.isArray(section.paragraphs)) {
+        errors.push(`sections[${i}].paragraphs falta o no es array`);
+      } else {
+        section.paragraphs.forEach((p, j) => {
+          if (typeof p !== 'string') {
+            errors.push(`sections[${i}].paragraphs[${j}] no es string`);
+          }
+        });
+      }
+    });
+  }
+
+  if (!Array.isArray(obj.glossary_terms)) {
+    errors.push('Falta o no es array: glossary_terms');
+  } else {
+    obj.glossary_terms.forEach((item, i) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        errors.push(`glossary_terms[${i}] no es objeto`);
+        return;
+      }
+      if (typeof item.term !== 'string') {
+        errors.push(`glossary_terms[${i}].term falta o no es string`);
+      }
+      if (typeof item.definition !== 'string') {
+        errors.push(`glossary_terms[${i}].definition falta o no es string`);
+      }
+    });
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors
+  };
+}
+
 async function callClaudeText(system, prompt, maxTokens = MAX_TOKENS) {
   const response = await client.messages.create({
     model: MODEL,
@@ -61,26 +170,36 @@ async function callClaudeText(system, prompt, maxTokens = MAX_TOKENS) {
     usage: {
       input_tokens: response.usage?.input_tokens || 0,
       output_tokens: response.usage?.output_tokens || 0
-    }
+    },
+    stop_reason: response.stop_reason || null,
+    model: MODEL
   };
 }
 
-/* =========================
-   CLAUDE JSON + REPAIR
-========================= */
-async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS) {
+async function callClaudeJson(system, prompt, maxTokens = MAX_TOKENS, context = {}) {
   const first = await callClaudeText(system, prompt, maxTokens);
-  let json = extractJson(first.text);
+  const firstAnalysis = analyzeJsonText(first.text);
+  const firstParse = tryParseJson(first.text);
 
-  if (json) {
-    return { json, usage: first.usage };
+  if (firstParse.ok) {
+    const shape = validateChapterJsonShape(firstParse.value);
+    if (shape.ok) {
+      return {
+        json: firstParse.value,
+        usage: first.usage,
+        debug: {
+          parsed_on: 'first_pass',
+          parse_method: firstParse.method,
+          stop_reason: first.stop_reason
+        }
+      };
+    }
   }
 
-  // 🔴 REPAIR ESTRICTO
   const repairSystem = `
 Sos un parser estricto de JSON.
 
-Convertí el siguiente contenido a JSON válido respetando EXACTAMENTE este esquema:
+Convertí el contenido recibido a JSON válido respetando EXACTAMENTE este esquema:
 
 {
   "title": "string",
@@ -102,38 +221,90 @@ Convertí el siguiente contenido a JSON válido respetando EXACTAMENTE este esqu
 
 Reglas:
 - NO inventar contenido
-- SOLO reorganizar
-- SI falta algo → usar string vacío o []
-- NO explicar nada
+- SOLO reorganizar y sanear formato
+- SI falta algo, usar string vacío o []
 - RESPONDER SOLO JSON
+- NO usar markdown
+- NO usar backticks
 `;
 
-  const repairPrompt = first.text;
+  const repairPrompt = `
+Convertí este contenido a JSON válido.
+
+Si hay texto fuera del JSON, descartalo.
+Si el JSON está incompleto, completá SOLO con strings vacíos o arrays vacíos.
+
+CONTENIDO:
+${first.text}
+`.trim();
 
   const repaired = await callClaudeText(repairSystem, repairPrompt, 3000);
-  json = extractJson(repaired.text);
+  const repairedAnalysis = analyzeJsonText(repaired.text);
+  const repairedParse = tryParseJson(repaired.text);
 
-  if (!json) {
-    throw new Error('Claude devolvió JSON inválido en generación del manual');
+  if (repairedParse.ok) {
+    const shape = validateChapterJsonShape(repairedParse.value);
+    if (shape.ok) {
+      return {
+        json: repairedParse.value,
+        usage: {
+          input_tokens:
+            (first.usage.input_tokens || 0) +
+            (repaired.usage.input_tokens || 0),
+          output_tokens:
+            (first.usage.output_tokens || 0) +
+            (repaired.usage.output_tokens || 0)
+        },
+        debug: {
+          parsed_on: 'repair_pass',
+          parse_method: repairedParse.method,
+          stop_reason_first: first.stop_reason,
+          stop_reason_repair: repaired.stop_reason
+        }
+      };
+    }
+
+    throw new ManualGenerationError(
+      `Claude devolvió JSON parseable pero con esquema inválido en generación del manual`,
+      {
+        ...context,
+        stage: 'schema_validation_after_repair',
+        first_pass: {
+          analysis: firstAnalysis,
+          parse_error: firstParse.ok ? null : firstParse.error
+        },
+        repair_pass: {
+          analysis: repairedAnalysis,
+          parse_method: repairedParse.method,
+          schema_errors: shape.errors,
+          raw_snippet: safeSnippet(repaired.text, 2000)
+        }
+      }
+    );
   }
 
-  return {
-    json,
-    usage: {
-      input_tokens:
-        (first.usage.input_tokens || 0) +
-        (repaired.usage.input_tokens || 0),
-      output_tokens:
-        (first.usage.output_tokens || 0) +
-        (repaired.usage.output_tokens || 0)
+  throw new ManualGenerationError(
+    `Claude devolvió JSON inválido en generación del manual`,
+    {
+      ...context,
+      stage: 'json_parse_failed_after_repair',
+      first_pass: {
+        analysis: firstAnalysis,
+        parse_error: firstParse.ok ? null : firstParse.error,
+        raw_snippet: safeSnippet(first.text, 2000),
+        stop_reason: first.stop_reason
+      },
+      repair_pass: {
+        analysis: repairedAnalysis,
+        parse_error: repairedParse.ok ? null : repairedParse.error,
+        raw_snippet: safeSnippet(repaired.text, 2000),
+        stop_reason: repaired.stop_reason
+      }
     }
-  };
+  );
 }
 
-/* =========================
-   HELPERS
-========================= */
-function trimDocText(text = '', maxChars = 8000) {
+function trimDocText(text = '', maxChars = 6000) {
   if (!text) return '';
   return text.length <= maxChars ? text : text.slice(0, maxChars);
 }
@@ -143,26 +314,20 @@ function getDocsForChapter(corpus, chapter) {
   return corpus.documents.filter((doc) => names.has(doc.name));
 }
 
-/* =========================
-   SYSTEM PROMPT REDUCIDO
-========================= */
 function buildSystemPrompt() {
   return `Sos el motor editorial de ManualTeX.
 
-Reglas:
+Reglas críticas:
 - No resumís: reconstruís conocimiento
-- Prosa académica obligatoria
+- La prosa académica domina
 - No inventar contenido fuera del corpus
 - No generar LaTeX
-- Priorizar JSON válido por sobre complejidad
+- Priorizá JSON válido y esquema correcto
 
-PROTOCOLO:
-${SKILL_TEXT.slice(0, 8000)}`;
+Protocolo editorial base:
+${SKILL_TEXT.slice(0, 6000)}`;
 }
 
-/* =========================
-   NORMALIZACIÓN
-========================= */
 function cleanTitle(text = '', fallback = 'Sin título') {
   const stripped = String(text)
     .replace(/^\d+(\.\d+)*\s*/g, '')
@@ -185,7 +350,7 @@ function normalizeChapterJson(json, fallbackTitle) {
     closing: String(json.closing || '').trim(),
     glossary_terms: Array.isArray(json.glossary_terms)
       ? json.glossary_terms
-          .filter((x) => x?.term && x?.definition)
+          .filter((x) => x && x.term && x.definition)
           .map((x) => ({
             term: String(x.term).trim(),
             definition: String(x.definition).trim()
@@ -194,30 +359,32 @@ function normalizeChapterJson(json, fallbackTitle) {
   };
 }
 
-/* =========================
-   GENERACIÓN DE CAPÍTULO
-========================= */
-async function generateChapterContent(corpus, chapter, idx) {
-  const docs = getDocsForChapter(corpus, chapter);
+async function generateChapterContent(corpus, chapter, chapterIndex) {
+  const sourceDocs = getDocsForChapter(corpus, chapter);
 
-  const reducedDocs = docs.map((d) => ({
-    name: d.name,
-    category: d.preliminary_category,
-    text: trimDocText(d.text)
+  const reducedDocs = sourceDocs.map((doc) => ({
+    name: doc.name,
+    preliminary_category: doc.preliminary_category,
+    pages: doc.pages,
+    chars: doc.chars,
+    text: trimDocText(doc.text, 6000)
   }));
 
   const system = buildSystemPrompt();
 
   const prompt = `
-Generá el capítulo ${idx + 1}.
+Desarrollá el capítulo ${chapterIndex + 1} de un manual universitario.
 
-ESTRUCTURA:
-${JSON.stringify(chapter)}
+METADATA:
+${JSON.stringify(corpus.metadata || {})}
 
-FUENTES:
+ESTRUCTURA DEL CAPÍTULO:
+${JSON.stringify(chapter || {})}
+
+FUENTES DISPONIBLES:
 ${JSON.stringify(reducedDocs)}
 
-FORMATO OBLIGATORIO:
+Respondé SOLO con JSON válido bajo este esquema exacto:
 
 {
   "title": "string",
@@ -237,67 +404,104 @@ FORMATO OBLIGATORIO:
   ]
 }
 
-REGLAS:
-- Cada párrafo es un string separado
-- No usar saltos de línea dentro de strings
-- No usar comillas internas
-- JSON válido obligatorio
-`;
+Reglas:
+- Cada párrafo debe ser un string distinto dentro de paragraphs
+- No usar markdown
+- No usar backticks
+- No usar texto fuera del JSON
+- No inventar contenido fuera de las fuentes
+- Si un dato no aplica, usar string vacío o []
+`.trim();
 
-  const result = await callClaudeJson(system, prompt, 5000);
+  const result = await callClaudeJson(system, prompt, 5000, {
+    chapter_index: chapterIndex,
+    chapter_title: chapter?.title || `Capítulo ${chapterIndex + 1}`,
+    source_documents: (chapter?.source_documents || []).slice(0, 20),
+    source_doc_count: reducedDocs.length,
+    model: MODEL
+  });
 
   return {
-    json: normalizeChapterJson(result.json, chapter.title),
-    usage: result.usage
+    json: normalizeChapterJson(
+      result.json,
+      chapter.title || `Capítulo ${chapterIndex + 1}`
+    ),
+    usage: result.usage,
+    debug: result.debug
   };
 }
 
-/* =========================
-   MANUAL COMPLETO
-========================= */
 function dedupeGlossary(allTerms) {
   const seen = new Map();
 
   for (const item of allTerms) {
-    if (!item?.term || !item?.definition) continue;
-    const key = item.term.toLowerCase();
+    if (!item || !item.term || !item.definition) continue;
+    const key = item.term.trim().toLowerCase();
     if (!seen.has(key)) {
-      seen.set(key, item);
+      seen.set(key, {
+        term: item.term.trim(),
+        definition: item.definition.trim()
+      });
     }
   }
 
-  return Array.from(seen.values());
+  return Array.from(seen.values()).sort((a, b) =>
+    a.term.localeCompare(b.term, 'es')
+  );
 }
 
 async function generateManualContent(corpus, structure) {
   const chapters = structure.chapters || [];
-
-  const generated = [];
-  const glossary = [];
-
-  let input = 0;
-  let output = 0;
+  const generatedChapters = [];
+  const glossaryTerms = [];
+  let totalInput = 0;
+  let totalOutput = 0;
+  const debugChapters = [];
 
   for (let i = 0; i < chapters.length; i++) {
-    const res = await generateChapterContent(corpus, chapters[i], i);
+    try {
+      const result = await generateChapterContent(corpus, chapters[i], i);
+      generatedChapters.push(result.json);
 
-    generated.push(res.json);
-    glossary.push(...res.json.glossary_terms);
+      if (Array.isArray(result.json.glossary_terms)) {
+        glossaryTerms.push(...result.json.glossary_terms);
+      }
 
-    input += res.usage.input_tokens;
-    output += res.usage.output_tokens;
+      totalInput += result.usage.input_tokens;
+      totalOutput += result.usage.output_tokens;
+
+      debugChapters.push({
+        chapter_index: i,
+        chapter_title: chapters[i]?.title || `Capítulo ${i + 1}`,
+        ok: true,
+        debug: result.debug
+      });
+    } catch (err) {
+      if (err instanceof ManualGenerationError) {
+        err.details = {
+          ...(err.details || {}),
+          completed_chapters: generatedChapters.length,
+          debug_chapters
+        };
+      }
+      throw err;
+    }
   }
 
   return {
-    chapters: generated,
-    glossary: dedupeGlossary(glossary),
+    chapters: generatedChapters,
+    glossary: dedupeGlossary(glossaryTerms),
     usage: {
-      input_tokens: input,
-      output_tokens: output
+      input_tokens: totalInput,
+      output_tokens: totalOutput
+    },
+    debug: {
+      chapters: debugChapters
     }
   };
 }
 
 module.exports = {
-  generateManualContent
+  generateManualContent,
+  ManualGenerationError
 };
