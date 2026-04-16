@@ -1,17 +1,24 @@
-import { useState, useRef, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
-import { extractPdfText } from "./lib/pdfExtractor";
+import * as pdfjsLib from "pdfjs-dist";
+import TaskProgressOverlay from "./components/TaskProgressOverlay";
+import useTaskProgress from "./hooks/useTaskProgress";
 
-const API_URL = import.meta.env.VITE_API_URL;
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
+).toString();
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
 export default function App() {
-  const [backendStatus] = useState("ok");
+  const [backendStatus, setBackendStatus] = useState("checking...");
+  const [error, setError] = useState("");
+  const [errorDetails, setErrorDetails] = useState(null);
 
+  const [loading, setLoading] = useState(false);
   const [zipName, setZipName] = useState("");
   const [files, setFiles] = useState([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
   const [processedDocs, setProcessedDocs] = useState([]);
   const [processingLog, setProcessingLog] = useState([]);
 
@@ -36,6 +43,41 @@ export default function App() {
   const [compileLog, setCompileLog] = useState("");
 
   const zipRef = useRef(null);
+  const { progressProps, start, advanceTo, fail, finish, reset } = useTaskProgress();
+
+  useEffect(() => {
+    checkHealth();
+  }, []);
+
+  async function checkHealth() {
+    try {
+      const res = await fetch(`${API_URL}/api/health`);
+      const data = await res.json();
+      setBackendStatus(data.status || "unknown");
+    } catch (err) {
+      console.error(err);
+      setBackendStatus("offline");
+    }
+  }
+
+  async function extractPdfText(zip, relativePath) {
+    const fileData = await zip.file(relativePath).async("uint8array");
+    const pdf = await pdfjsLib.getDocument({ data: fileData }).promise;
+
+    let fullText = "";
+
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const content = await page.getTextContent();
+      const text = content.items.map((item) => item.str).join(" ");
+      fullText += text + "\n\n";
+    }
+
+    return {
+      pages: pdf.numPages,
+      text: fullText
+    };
+  }
 
   async function handleZipChange(event) {
     const file = event.target.files?.[0];
@@ -43,6 +85,9 @@ export default function App() {
 
     setLoading(true);
     setError("");
+    setErrorDetails(null);
+    reset();
+
     setFiles([]);
     setProcessedDocs([]);
     setProcessingLog([]);
@@ -95,6 +140,7 @@ export default function App() {
 
     setLoading(true);
     setError("");
+    setErrorDetails(null);
     setProcessedDocs([]);
     setProcessingLog([]);
     setStructureResult(null);
@@ -105,14 +151,26 @@ export default function App() {
     setPdfBase64("");
     setCompileLog("");
 
+    start({
+      profile: "processPdfs",
+      title: "Procesando PDFs",
+      detail: "Se está construyendo el corpus local a partir del ZIP"
+    });
+
     try {
       const pdfFiles = files.filter((f) => f.isPdf);
       const results = [];
       const logs = [];
 
-      for (const file of pdfFiles) {
+      advanceTo(10, "Abriendo archivos PDF");
+
+      for (let index = 0; index < pdfFiles.length; index++) {
+        const file = pdfFiles[index];
+        const progress = 20 + Math.round((index / Math.max(pdfFiles.length, 1)) * 50);
+
         logs.push(`Procesando: ${file.name}`);
         setProcessingLog([...logs]);
+        advanceTo(progress, `Extrayendo texto de ${index + 1} de ${pdfFiles.length}`);
 
         try {
           const data = await extractPdfText(zipRef.current, file.path);
@@ -137,10 +195,13 @@ export default function App() {
         }
       }
 
+      advanceTo(92, "Consolidando corpus");
       setProcessedDocs(results);
+      finish("PDFs procesados");
     } catch (err) {
       console.error(err);
       setError(`Error procesando PDFs: ${err.message}`);
+      fail(err.message);
     } finally {
       setLoading(false);
     }
@@ -182,6 +243,7 @@ export default function App() {
   async function handleGenerateStructure() {
     setStructureLoading(true);
     setError("");
+    setErrorDetails(null);
     setStructureResult(null);
     setApprovalMessage("");
     setGeneratedTex("");
@@ -189,7 +251,15 @@ export default function App() {
     setPdfBase64("");
     setCompileLog("");
 
+    start({
+      profile: "structure",
+      title: "Generando estructura",
+      detail: "La IA está analizando el corpus y proponiendo la estructura del manual"
+    });
+
     try {
+      advanceTo(12, "Preparando corpus");
+
       const res = await fetch(`${API_URL}/api/structure`, {
         method: "POST",
         headers: {
@@ -198,10 +268,12 @@ export default function App() {
         body: JSON.stringify({ corpus })
       });
 
+      advanceTo(86, "Procesando respuesta");
+
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Error generando estructura");
+        throw buildFrontendError(data, "Error generando estructura");
       }
 
       setStructureResult({
@@ -210,9 +282,13 @@ export default function App() {
         issues: data.issues,
         usage: data.usage
       });
+
+      finish("Estructura lista");
     } catch (err) {
       console.error(err);
       setError(err.message);
+      setErrorDetails(err.details || null);
+      fail(err.message);
     } finally {
       setStructureLoading(false);
     }
@@ -223,13 +299,22 @@ export default function App() {
 
     setStructureLoading(true);
     setError("");
+    setErrorDetails(null);
     setApprovalMessage("");
     setGeneratedTex("");
     setTexUsage(null);
     setPdfBase64("");
     setCompileLog("");
 
+    start({
+      profile: "revise",
+      title: "Rehaciendo estructura",
+      detail: "La IA está revisando la estructura con tu feedback"
+    });
+
     try {
+      advanceTo(12, "Preparando feedback");
+
       const res = await fetch(`${API_URL}/api/structure/revise`, {
         method: "POST",
         headers: {
@@ -242,10 +327,12 @@ export default function App() {
         })
       });
 
+      advanceTo(86, "Procesando respuesta");
+
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Error rehaciendo estructura");
+        throw buildFrontendError(data, "Error rehaciendo estructura");
       }
 
       setStructureResult((prev) => ({
@@ -257,9 +344,12 @@ export default function App() {
 
       setFeedbackText("");
       setApprovalMessage("Se generó una nueva versión de la estructura con tu feedback.");
+      finish("Estructura revisada");
     } catch (err) {
       console.error(err);
       setError(err.message);
+      setErrorDetails(err.details || null);
+      fail(err.message);
     } finally {
       setStructureLoading(false);
     }
@@ -283,12 +373,21 @@ export default function App() {
 
     setTexLoading(true);
     setError("");
+    setErrorDetails(null);
     setGeneratedTex("");
     setTexUsage(null);
     setPdfBase64("");
     setCompileLog("");
 
+    start({
+      profile: "generateTex",
+      title: "Generando .tex",
+      detail: "La IA está redactando el manual y el backend está armando el archivo LaTeX"
+    });
+
     try {
+      advanceTo(12, "Preparando datos");
+
       const res = await fetch(`${API_URL}/api/generate-tex`, {
         method: "POST",
         headers: {
@@ -300,17 +399,22 @@ export default function App() {
         })
       });
 
+      advanceTo(88, "Procesando respuesta del backend");
+
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Error generando .tex");
+        throw buildFrontendError(data, "Error generando .tex");
       }
 
       setGeneratedTex(data.tex || "");
       setTexUsage(data.usage || null);
+      finish("Archivo .tex listo");
     } catch (err) {
       console.error(err);
       setError(err.message);
+      setErrorDetails(err.details || null);
+      fail(err.message);
     } finally {
       setTexLoading(false);
     }
@@ -321,10 +425,19 @@ export default function App() {
 
     setPdfLoading(true);
     setError("");
+    setErrorDetails(null);
     setPdfBase64("");
     setCompileLog("");
 
+    start({
+      profile: "compilePdf",
+      title: "Compilando PDF",
+      detail: "El backend está ejecutando LaTeX y validando el PDF"
+    });
+
     try {
+      advanceTo(14, "Enviando .tex al compilador");
+
       const res = await fetch(`${API_URL}/api/compile-pdf`, {
         method: "POST",
         headers: {
@@ -333,17 +446,23 @@ export default function App() {
         body: JSON.stringify({ tex: generatedTex })
       });
 
+      advanceTo(88, "Recibiendo resultado de compilación");
+
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Error compilando PDF");
+        setCompileLog(data.compile_log || "");
+        throw buildFrontendError(data, "Error compilando PDF");
       }
 
       setPdfBase64(data.pdf_base64 || "");
       setCompileLog(data.compile_log || "");
+      finish("PDF listo");
     } catch (err) {
       console.error(err);
       setError(err.message);
+      setErrorDetails(err.details || null);
+      fail(err.message);
     } finally {
       setPdfLoading(false);
     }
@@ -393,6 +512,8 @@ export default function App() {
 
   return (
     <div style={container}>
+      <TaskProgressOverlay {...progressProps} />
+
       <h1>ManualTeX v1</h1>
       <p>Backend: <strong>{backendStatus}</strong></p>
 
@@ -401,8 +522,15 @@ export default function App() {
         <input type="file" accept=".zip" onChange={handleZipChange} />
         {zipName && <p><strong>ZIP:</strong> {zipName}</p>}
         {loading && <p>Leyendo...</p>}
-        {error && <p style={{ color: "crimson" }}>{error}</p>}
+        {error && <p style={{ color: "crimson", whiteSpace: "pre-wrap" }}>{error}</p>}
       </div>
+
+      {errorDetails && (
+        <div style={errorCard}>
+          <h3 style={{ marginTop: 0 }}>Detalles del error</h3>
+          <pre style={jsonBox}>{JSON.stringify(errorDetails, null, 2)}</pre>
+        </div>
+      )}
 
       {files.length > 0 && !loading && (
         <div style={card}>
@@ -415,7 +543,7 @@ export default function App() {
 
       {pdfFiles.length > 0 && (
         <div style={card}>
-          <button onClick={processPdfs} style={button}>
+          <button onClick={processPdfs} style={button} disabled={loading}>
             Procesar PDFs
           </button>
         </div>
@@ -437,22 +565,38 @@ export default function App() {
             <div style={formGrid}>
               <label style={label}>
                 Materia
-                <input style={input} value={metadata.materia} onChange={(e) => updateMetadata("materia", e.target.value)} />
+                <input
+                  style={input}
+                  value={metadata.materia}
+                  onChange={(e) => updateMetadata("materia", e.target.value)}
+                />
               </label>
 
               <label style={label}>
                 Unidad
-                <input style={input} value={metadata.unidad} onChange={(e) => updateMetadata("unidad", e.target.value)} />
+                <input
+                  style={input}
+                  value={metadata.unidad}
+                  onChange={(e) => updateMetadata("unidad", e.target.value)}
+                />
               </label>
 
               <label style={label}>
                 Cátedra
-                <input style={input} value={metadata.catedra} onChange={(e) => updateMetadata("catedra", e.target.value)} />
+                <input
+                  style={input}
+                  value={metadata.catedra}
+                  onChange={(e) => updateMetadata("catedra", e.target.value)}
+                />
               </label>
 
               <label style={label}>
                 Tipo
-                <select style={input} value={metadata.tipo} onChange={(e) => updateMetadata("tipo", e.target.value)}>
+                <select
+                  style={input}
+                  value={metadata.tipo}
+                  onChange={(e) => updateMetadata("tipo", e.target.value)}
+                >
                   <option value="">Seleccionar</option>
                   <option value="exacta">Exacta</option>
                   <option value="humanistica">Humanística</option>
@@ -654,6 +798,22 @@ export default function App() {
   );
 }
 
+function buildFrontendError(data, fallbackMessage) {
+  const message = data?.error || fallbackMessage || "Error inesperado";
+  const err = new Error(message);
+  err.details = data?.details || null;
+  err.compile_log = data?.compile_log || "";
+
+  if (err.compile_log && !err.details) {
+    err.details = {
+      stage: "backend_error_with_compile_log",
+      compile_log_snippet: String(err.compile_log).slice(0, 3000)
+    };
+  }
+
+  return err;
+}
+
 function getExtension(filename) {
   const parts = filename.split(".");
   if (parts.length < 2) return "";
@@ -673,6 +833,14 @@ const card = {
   border: "1px solid #ddd",
   borderRadius: 10,
   background: "#fff"
+};
+
+const errorCard = {
+  marginTop: 20,
+  padding: 16,
+  border: "1px solid #f3b0b0",
+  borderRadius: 10,
+  background: "#fff5f5"
 };
 
 const feedbackCard = {
@@ -768,7 +936,7 @@ const formGrid = {
 const label = {
   display: "flex",
   flexDirection: "column",
-  gap: 6,
+  gap: 8,
   fontWeight: 600
 };
 
@@ -776,20 +944,22 @@ const labelSmall = {
   display: "flex",
   flexDirection: "column",
   gap: 6,
-  fontSize: 14
+  fontSize: 13
 };
 
 const input = {
-  padding: 8,
+  padding: 10,
   borderRadius: 8,
-  border: "1px solid #ccc"
+  border: "1px solid #ccc",
+  fontSize: 14
 };
 
 const docCard = {
-  border: "1px solid #eee",
+  padding: 14,
+  border: "1px solid #e5e5e5",
   borderRadius: 10,
-  padding: 12,
-  marginBottom: 12
+  marginTop: 12,
+  background: "#fafafa"
 };
 
 const docHeader = {
@@ -797,7 +967,7 @@ const docHeader = {
   justifyContent: "space-between",
   alignItems: "flex-start",
   gap: 16,
-  marginBottom: 10
+  flexWrap: "wrap"
 };
 
 const muted = {
@@ -807,20 +977,22 @@ const muted = {
 };
 
 const previewBox = {
-  background: "#fafafa",
-  border: "1px solid #eee",
+  background: "#fff",
+  border: "1px solid #e3e3e3",
   borderRadius: 8,
   padding: 12,
   whiteSpace: "pre-wrap",
-  lineHeight: 1.4
+  lineHeight: 1.45,
+  color: "#333"
 };
 
 const jsonBox = {
-  background: "#111",
-  color: "#eee",
+  background: "#0f172a",
+  color: "#e2e8f0",
   padding: 16,
   borderRadius: 10,
   overflowX: "auto",
-  fontSize: 13,
-  lineHeight: 1.4
+  whiteSpace: "pre-wrap",
+  lineHeight: 1.45,
+  fontSize: 13
 };
