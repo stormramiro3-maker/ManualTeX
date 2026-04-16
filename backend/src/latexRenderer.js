@@ -16,11 +16,34 @@ function cleanTitle(text = '', max = 65) {
   const stripped = String(text)
     .replace(/^\d+(\.\d+)*\s*/g, '')
     .trim();
-  return stripped.length <= max ? stripped : stripped.slice(0, max).trim();
+
+  const base = stripped || 'Sin título';
+  return base.length <= max ? base : base.slice(0, max).trim();
 }
 
-function renderParagraphBlock(paragraphs = []) {
+function normalizeParagraphs(paragraphs = []) {
+  if (!Array.isArray(paragraphs)) return [];
+
   return paragraphs
+    .map((p) => String(p || '').trim())
+    .filter(Boolean);
+}
+
+function splitParagraphsFromText(text = '') {
+  return String(text)
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+function renderParagraphBlockFromArray(paragraphs = []) {
+  return normalizeParagraphs(paragraphs)
+    .map((p) => `${esc(p)}\n`)
+    .join('\n');
+}
+
+function renderParagraphBlockFromText(text = '') {
+  return splitParagraphsFromText(text)
     .map((p) => `${esc(p)}\n`)
     .join('\n');
 }
@@ -31,18 +54,19 @@ function renderChapter(chapter) {
   out += `\\unidad{${esc(cleanTitle(chapter.title, 45))}}\n\n`;
 
   if (chapter.intro) {
-    out += `${esc(chapter.intro)}\n\n`;
+    out += renderParagraphBlockFromText(chapter.intro);
+    out += '\n';
   }
 
   for (const section of chapter.sections || []) {
     out += `\\seccion{${esc(cleanTitle(section.title, 65))}}\n\n`;
-    out += renderParagraphBlock(section.paragraphs || []);
+    out += renderParagraphBlockFromArray(section.paragraphs || []);
     out += '\n';
   }
 
   if (chapter.closing) {
     out += `\\begin{nota}[title={Cierre del capítulo}]\n`;
-    out += `${esc(chapter.closing)}\n`;
+    out += `${esc(String(chapter.closing || '').trim())}\n`;
     out += `\\end{nota}\n\n`;
   }
 
@@ -52,7 +76,8 @@ function renderChapter(chapter) {
 function renderGlossary(glossary = []) {
   let out = `\\glosario\n\n`;
 
-  for (const item of glossary) {
+  for (const item of glossary || []) {
+    if (!item?.term || !item?.definition) continue;
     out += `\\glsentry{${esc(item.term)}}{${esc(item.definition)}}\n`;
   }
 
@@ -61,10 +86,8 @@ function renderGlossary(glossary = []) {
 
 function renderManualToTex({ corpus, approvedStructure, manualContent, template }) {
   const metadata = corpus.metadata || {};
-
   const titleMateria = metadata.materia || 'Materia';
-  const titleUnidad =
-    metadata.unidad || approvedStructure.title || 'Unidad';
+  const titleUnidad = metadata.unidad || approvedStructure.title || 'Unidad';
   const catedra = metadata.catedra || 'Cátedra';
 
   const marker = '\\begin{document}';
